@@ -732,7 +732,8 @@ def NZB_SEARCH(ComicName, IssueNumber, ComicYear, SeriesYear, Publisher, IssueDa
 
                     #bypass for local newznabs
                     #remove the protocol string (http/https)
-                    localbypass = False
+                    localbypass = True
+
                     if nzbprov == 'newznab':
                         if host_newznab_fix.startswith('http'):
                             hnc = host_newznab_fix.replace('http://', '')
