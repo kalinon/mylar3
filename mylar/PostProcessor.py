@@ -2832,49 +2832,51 @@ class PostProcessor(object):
 
 
     def sendnotify(self, series, issueyear, issuenumOG, annchk, module, imageFile):
+        try:
+            if issueyear is None:
+                prline = '%s %s' % (series, issuenumOG)
+            else:
+                prline = '%s (%s) %s' % (series, issueyear, issuenumOG)
 
-        if issueyear is None:
-            prline = '%s %s' % (series, issuenumOG)
-        else:
-            prline = '%s (%s) %s' % (series, issueyear, issuenumOG)
+            prline2 = 'Mylar has downloaded and post-processed: ' + prline
 
-        prline2 = 'Mylar has downloaded and post-processed: ' + prline
+            if mylar.CONFIG.PROWL_ENABLED:
+                pushmessage = prline
+                prowl = notifiers.PROWL()
+                prowl.notify(pushmessage, "Download and Postprocessing completed", module=module)
 
-        if mylar.CONFIG.PROWL_ENABLED:
-            pushmessage = prline
-            prowl = notifiers.PROWL()
-            prowl.notify(pushmessage, "Download and Postprocessing completed", module=module)
+            if mylar.CONFIG.PUSHOVER_ENABLED:
+                pushover = notifiers.PUSHOVER()
+                pushover.notify(prline, prline2, module=module, imageFile=imageFile)
 
-        if mylar.CONFIG.PUSHOVER_ENABLED:
-            pushover = notifiers.PUSHOVER()
-            pushover.notify(prline, prline2, module=module, imageFile=imageFile)
+            if mylar.CONFIG.BOXCAR_ENABLED:
+                boxcar = notifiers.BOXCAR()
+                boxcar.notify(prline=prline, prline2=prline2, module=module)
 
-        if mylar.CONFIG.BOXCAR_ENABLED:
-            boxcar = notifiers.BOXCAR()
-            boxcar.notify(prline=prline, prline2=prline2, module=module)
+            if mylar.CONFIG.PUSHBULLET_ENABLED:
+                pushbullet = notifiers.PUSHBULLET()
+                pushbullet.notify(prline=prline, prline2=prline2, module=module)
 
-        if mylar.CONFIG.PUSHBULLET_ENABLED:
-            pushbullet = notifiers.PUSHBULLET()
-            pushbullet.notify(prline=prline, prline2=prline2, module=module)
+            if mylar.CONFIG.TELEGRAM_ENABLED:
+                telegram = notifiers.TELEGRAM()
+                telegram.notify(prline2, imageFile)
 
-        if mylar.CONFIG.TELEGRAM_ENABLED:
-            telegram = notifiers.TELEGRAM()
-            telegram.notify(prline2, imageFile)
+            if mylar.CONFIG.SLACK_ENABLED:
+                slack = notifiers.SLACK()
+                slack.notify("Download and Postprocessing completed", prline2, module=module)
 
-        if mylar.CONFIG.SLACK_ENABLED:
-            slack = notifiers.SLACK()
-            slack.notify("Download and Postprocessing completed", prline2, module=module)
+            if mylar.CONFIG.DISCORD_ENABLED:
+                discord = notifiers.DISCORD()
+                discord.notify("Download and Postprocessing completed", prline2, module=module)
 
-        if mylar.CONFIG.DISCORD_ENABLED:
-            discord = notifiers.DISCORD()
-            discord.notify("Download and Postprocessing completed", prline2, module=module)
-
-        if mylar.CONFIG.EMAIL_ENABLED and mylar.CONFIG.EMAIL_ONPOST:
-            logger.info("Sending email notification")
-            email = notifiers.EMAIL()
-            email.notify(prline2, "Mylar notification - Processed", module=module)
-
+            if mylar.CONFIG.EMAIL_ENABLED and mylar.CONFIG.EMAIL_ONPOST:
+                logger.info("Sending email notification")
+                email = notifiers.EMAIL()
+                email.notify(prline2, "Mylar notification - Processed", module=module)
+        except Exception as e:
+            logger.info('[WARNING] Unable to send notification')
         return
+
 
 class FolderCheck():
 
