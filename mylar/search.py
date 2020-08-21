@@ -901,7 +901,7 @@ def NZB_SEARCH(ComicName, IssueNumber, ComicYear, SeriesYear, Publisher, IssueDa
                                 #newer rss feeds will now return filesize from 32p. Safe-guard it incase it's an older result
                                 comsize_b = entry['length']
                             except:
-                                comsize_b = None 
+                                comsize_b = None
                         elif nzbprov == 'Public Torrents':
                             comsize_b = entry['length']
                         else:
@@ -919,9 +919,9 @@ def NZB_SEARCH(ComicName, IssueNumber, ComicYear, SeriesYear, Publisher, IssueDa
                                 if entry['site'] == 'WWT':
                                     comsize_b = entry['size']
                                 elif entry['site'] == 'DDL':
-                                    comsize_b = helpers.human2bytes(entry['size'])
+                                    comsize_b = helpers.human2bytes(entry['size'].split('/')[0])
                             except Exception as e:
-                                tmpsz = entry.enclosures[0]
+                                tmpsz = entry['enclosures'][0]
                                 comsize_b = tmpsz['length']
 
                     logger.fdebug('comsize_b: %s' % comsize_b)
@@ -1328,7 +1328,7 @@ def NZB_SEARCH(ComicName, IssueNumber, ComicYear, SeriesYear, Publisher, IssueDa
 
                 if all([nzbprov == '32P', allow_packs == True, RSS == 'no']):
                     logger.fdebug('pack: %s' % entry['pack'])
-                if (all([nzbprov == '32P', RSS == 'no', allow_packs == True]) and any([entry['pack'] == '1', entry['pack'] == '2'])) or (all([nzbprov == 'ddl', pack_test is True])):  #allow_packs is True 
+                if (all([nzbprov == '32P', RSS == 'no', allow_packs == True]) and any([entry['pack'] == '1', entry['pack'] == '2'])) or (all([nzbprov == 'ddl', pack_test is True])):  #allow_packs is True
                     if nzbprov == '32P':
                         if entry['pack'] == '2':
                             logger.fdebug('[PACK-QUEUE] Diamond FreeLeech Pack detected.')
@@ -1569,12 +1569,12 @@ def NZB_SEARCH(ComicName, IssueNumber, ComicYear, SeriesYear, Publisher, IssueDa
                 issinfo = mylar.COMICINFO['pack_issuelist']
             if issinfo is not None:
                 #we need to get EVERY issue ID within the pack and update the log to reflect that they're being downloaded via a pack.
-                
+
                 try:
                     logger.fdebug('Found matching comic within pack...preparing to send to Updater with IssueIDs: %s and nzbname of %s' % (issueid_info, nzbname))
                 except NameError:
                     logger.fdebug('Did not find issueid_info')
-                    
+
                 #because packs need to have every issue that's not already Downloaded in a Snatched status, throw it to the updater here as well.
                 for isid in issinfo['issues']:
                     updater.nzblog(isid['issueid'], nzbname, ComicName, SARC=SARC, IssueArcID=IssueArcID, id=nzbid, prov=tmpprov, oneoff=oneoff)
@@ -1727,7 +1727,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                 storyarc_watchlist = False
                 comic = myDB.selectone("SELECT * from comics WHERE ComicID=? AND ComicName != 'None'", [result['ComicID']]).fetchone()
                 if all([comic is None, result['mode'] == 'story_arc']):
-                    comic = myDB.selectone("SELECT * from storyarcs WHERE StoryArcID=? AND IssueArcID=?", [result['StoryArcID'],result['IssueArcID']]).fetchone() 
+                    comic = myDB.selectone("SELECT * from storyarcs WHERE StoryArcID=? AND IssueArcID=?", [result['StoryArcID'],result['IssueArcID']]).fetchone()
                     if comic is None:
                         logger.fdebug('%s has no associated comic information in the Arc. Skipping searching for this series.' % result['ComicID'])
                         continue
@@ -2197,7 +2197,7 @@ def searcher(nzbprov, nzbname, comicinfo, link, IssueID, ComicID, tmpprov, direc
                 logger.fdebug('[FAILED_DOWNLOAD_CHECKER] This is not in the failed downloads list. Will continue with the download.')
         else:
             logger.fdebug('[FAILED_DOWNLOAD_CHECKER] Failed download checking is not available for one-off downloads atm. Fixed soon!')
- 
+
     if link and all([nzbprov != 'WWT', nzbprov != 'DEM', nzbprov != '32P', nzbprov != 'torznab', nzbprov != 'ddl']):
 
         #generate nzbid here.
@@ -2273,7 +2273,7 @@ def searcher(nzbprov, nzbname, comicinfo, link, IssueID, ComicID, tmpprov, direc
             if tmp_url_en == -1:
                 tmp_url_en = len(tmp_url)
             tmp_line += tmp_url[tmp_url_en:]
-            #tmp_url = helpers.apiremove(down_url.copy(), '&') 
+            #tmp_url = helpers.apiremove(down_url.copy(), '&')
             logger.fdebug('[PAYLOAD-NONE] Download URL: %s [VerifySSL: %s]' % (tmp_line, verify))
         else:
             tmppay = payload.copy()
@@ -2774,7 +2774,7 @@ def notify_snatch(sent_to, comicname, comyear, IssueNumber, nzbprov, pack):
         snline = 'Issue snatched!'
     else:
         snline = 'Pack snatched!'
- 
+
     if IssueNumber is not None:
         snatched_name = '%s (%s) #%s' % (comicname, comyear, IssueNumber)
     else:
