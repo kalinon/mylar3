@@ -632,7 +632,7 @@ def rename_param(comicid, comicname, issue, ofilename, comicyear=None, issueid=N
             filebad = [':', ',', '/', '?', '!', '\'', '\"', '\*'] #in u_comicname or '/' in u_comicname or ',' in u_comicname or '?' in u_comicname:
             for dbd in filebad:
                 if dbd in seriesfilename:
-                    if any([dbd == '/', dbd == '*']): 
+                    if any([dbd == '/', dbd == '*']):
                         repthechar = '-'
                     else:
                         repthechar = ''
@@ -1302,7 +1302,7 @@ def upgrade_dynamic():
         for ds in dynamic_storylist:
             CtrlVal = {"IssueArcID": ds['IssueArcID']}
             newVal = {"DynamicComicName": ds['DynamicComicName']}
-            myDB.upsert("storyarcs", newVal, CtrlVal)   
+            myDB.upsert("storyarcs", newVal, CtrlVal)
 
     logger.info('Finished updating ' + str(len(dynamic_comiclist)) + ' / ' + str(len(dynamic_storylist)) + ' entries within the db.')
     mylar.CONFIG.DYNAMIC_UPDATE = 4
@@ -2130,7 +2130,7 @@ def duplicate_filecheck(filename, ComicID=None, IssueID=None, StoryArcID=None, r
     series = myDB.selectone("SELECT * FROM comics WHERE ComicID=?", [dupchk['ComicID']]).fetchone()
 
     #if it's a retry and the file was already snatched, the status is Snatched and won't hit the dupecheck.
-    #rtnval will be one of 3: 
+    #rtnval will be one of 3:
     #'write' - write new file
     #'dupe_file' - do not write new file as existing file is better quality
     #'dupe_src' - write new file, as existing file is a lesser quality (dupe)
@@ -2449,7 +2449,7 @@ def issue_find_ids(ComicName, ComicID, pack, IssueNumber):
         #remove the annuals wording
         tmp_annuals = pack[pack.find('Annual'):]
         tmp_ann = re.sub('[annual/annuals/+]', '', tmp_annuals.lower()).strip()
-        tmp_pack = re.sub('[annual/annuals/+]', '', pack.lower()).strip() 
+        tmp_pack = re.sub('[annual/annuals/+]', '', pack.lower()).strip()
         pack_issues_numbers = re.findall(r'\d+', tmp_pack)
         pack_issues = list(range(int(pack_issues_numbers[0]),int(pack_issues_numbers[1])+1))
         annualize = True
@@ -2795,7 +2795,7 @@ def torrentinfo(issueid=None, torrent_hash=None, download=False, monitor=False):
             torrent_folder = torrent_info['folder']
 
         if all([torrent_status is True, download is True]):
-            if not issueid: 
+            if not issueid:
                 torrent_info['snatch_status'] = 'MONITOR STARTING'
                 #yield torrent_info
 
@@ -3142,9 +3142,11 @@ def search_queue(queue):
 
             logger.info('[SEARCH-QUEUE] Now loading item from search queue: %s' % item)
             if mylar.SEARCHLOCK is False:
-                ss_queue = mylar.search.searchforissue(item['issueid'])
-                time.sleep(5) #arbitrary sleep to let the process attempt to finish pp'ing
-
+                try:
+                    ss_queue = mylar.search.searchforissue(item['issueid'])
+                    time.sleep(5) #arbitrary sleep to let the process attempt to finish pp'ing
+                except Exception as e:
+                    logger.error(e)
             if mylar.SEARCHLOCK is True:
                 logger.fdebug('[SEARCH-QUEUE] Another item is currently being searched....')
                 time.sleep(15)
@@ -4127,7 +4129,7 @@ def file_ops(path,dst,arc=False,one_off=False):
                         logger.warn('[' + str(e) + '] Hardlinking failure. Could not create hardlink - dropping down to copy mode so that this operation can complete. Intervention is required if you wish to continue using hardlinks.')
                         try:
                             shutil.copy( path, dst )
-                            logger.fdebug('Successfully copied file to : ' + dst) 
+                            logger.fdebug('Successfully copied file to : ' + dst)
                             return True
                         except Exception as e:
                             logger.error('[COPY] error : %s' % e)
@@ -4148,7 +4150,7 @@ def file_ops(path,dst,arc=False,one_off=False):
                 try:
                     #first we need to copy the file to the new location, then create the symlink pointing from new -> original
                     if not arc:
-                        shutil.move( path, dst )            
+                        shutil.move( path, dst )
                         if os.path.lexists( path ):
                             os.remove( path )
                         os.symlink( dst, path )
