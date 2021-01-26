@@ -60,6 +60,9 @@ def serve_template(templatename, **kwargs):
                  'icon_upcoming': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'icon_upcoming.png'),
                  'icon_wanted': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'icon_wanted.png'),
                  'icon_search': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'icon_search.png'),
+                 'listview_icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'listview_icon.png'),
+                 'delete_icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'delete_icon.png'),
+                 'deleteall_icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'deleteall_icon.png'),
                  'prowl_logo': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'prowl_logo.png'),
                  'ReadingList-icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'ReadingList-icon.png'),
                  'next': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'next.gif'),
@@ -69,6 +72,9 @@ def serve_template(templatename, **kwargs):
                  'icon_upcoming': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'icon_upcoming.png'),
                  'icon_wanted': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'icon_wanted.png'),
                  'icon_search': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'icon_search.png'),
+                 'listview_icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'listview_icon.png'),
+                 'delete_icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'delete_icon.png'),
+                 'deleteall_icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'deleteall_icon.png'),
                  'prowl_logo': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'prowl_logo.png'),
                  'ReadingList-icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'ReadingList-icon.png'),
                  'next': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'next.gif'),
@@ -1773,7 +1779,7 @@ class WebInterface(object):
                             break
 
                 else:
-                    xlist = [x['Status'] for x in oneofflist if x['IssueID'] == weekly['IssueID']]
+                    xlist = [x['Status'] for x in oneofflist if x['IssueID'] == weekly['IssueID'] and weekly['IssueID'] is not None]
                     if xlist:
                         haveit = 'OneOff'
                         tmp_status = xlist[0]
@@ -2149,8 +2155,9 @@ class WebInterface(object):
 #                                               "Status":       upc['Status'],
 #                                               "DisplayComicName": upc['DisplayComicName']})
 
-        futureupcoming = sorted(futureupcoming, key=itemgetter('IssueDate', 'ComicName', 'IssueNumber'), reverse=True)
-
+        fup1 = sorted(futureupcoming, key=lambda x: x if isinstance(itemgetter('IssueDate'), str) else "", reverse=True)
+        fup2 = sorted(fup1, key=itemgetter('ComicName'), reverse=True)
+        futureupcoming = sorted(fup2, key=lambda x: x if isinstance(itemgetter('IssueNumber'), str) else "", reverse=True)
 
         #fix None DateAdded points here
         helpers.DateAddedFix()
@@ -2984,13 +2991,17 @@ class WebInterface(object):
         self.schedulerForceCheck(jobid='search')
     forceSearch.exposed = True
 
-    def forceRescan(self, ComicID, bulk=False, action='recheck'):
+    def forceRescan(self, ComicID, bulk=False, action='recheck', api=False):
         if bulk:
             cnt = 1
             if action == 'recheck':
                 for cid in ComicID:
-                    logger.info('[MASS BATCH][RECHECK-FILES][' + str(cnt) + '/' + str(len(ComicID)) + '] Rechecking ' + cid['ComicName'] + '(' + str(cid['ComicYear']) + ')')
-                    updater.forceRescan(cid['ComicID'])
+                    if api is False:
+                        logger.info('[MASS BATCH][RECHECK-FILES][' + str(cnt) + '/' + str(len(ComicID)) + '] Rechecking ' + cid['ComicName'] + '(' + str(cid['ComicYear']) + ')')
+                        updater.forceRescan(cid['ComicID'])
+                    else:
+                        logger.info('[MASS BATCH][RECHECK-FILES][' + str(cnt) + '/' + str(len(ComicID)) + '] Rechecking ComicID ' + str(cid))
+                        updater.forceRescan(cid)
                     cnt+=1
                 logger.info('[MASS BATCH][RECHECK-FILES] I have completed rechecking files for ' + str(len(ComicID)) + ' series.')
             else:
@@ -3002,6 +3013,8 @@ class WebInterface(object):
 
         else:
             threading.Thread(target=updater.forceRescan, args=[ComicID]).start()
+        #if api is True:
+        #    return 'Successfully submitted Recheck Files request for designated IDs'
     forceRescan.exposed = True
 
     def checkGithub(self):
@@ -4119,7 +4132,7 @@ class WebInterface(object):
 
     ReadMassCopy.exposed = True
 
-    def logs(self):
+    def logs(self, **kwargs):
         return serve_template(templatename="logs.html", title="Log", lineList=mylar.LOGLIST)
     logs.exposed = True
 
@@ -5295,7 +5308,8 @@ class WebInterface(object):
                     "opds_pagesize": mylar.CONFIG.OPDS_PAGESIZE,
                     "dlstats": dlprovstats,
                     "dltotals": freq_tot,
-                    "alphaindex": mylar.CONFIG.ALPHAINDEX
+                    "alphaindex": mylar.CONFIG.ALPHAINDEX,
+                    "backup_on_start": helpers.checked(mylar.CONFIG.BACKUP_ON_START)
                }
         return serve_template(templatename="config.html", title="Settings", config=config, comicinfo=comicinfo)
     config.exposed = True
@@ -5560,7 +5574,7 @@ class WebInterface(object):
 
 
     def configUpdate(self, **kwargs):
-        checked_configs = ['enable_https', 'launch_browser', 'syno_fix', 'auto_update', 'annuals_on', 'api_enabled', 'nzb_startup_search',
+        checked_configs = ['enable_https', 'launch_browser', 'backup_on_start', 'syno_fix', 'auto_update', 'annuals_on', 'api_enabled', 'nzb_startup_search',
                            'enforce_perms', 'sab_to_mylar', 'torrent_local', 'torrent_seedbox', 'rtorrent_ssl', 'rtorrent_verify', 'rtorrent_startonload',
                            'enable_torrents', 'enable_rss', 'nzbsu', 'nzbsu_verify',
                            'dognzb', 'dognzb_verify', 'experimental', 'enable_torrent_search', 'enable_32p', 'enable_torznab',
@@ -6427,7 +6441,7 @@ class WebInterface(object):
     def download_0day(self, week):
         logger.info('Now attempting to search for 0-day pack for week: %s' % week)
         #week contains weekinfo['midweek'] = YYYY-mm-dd of Wednesday of the given week's pull
-        foundcom, prov = search.search_init('0-Day Comics Pack - %s.%s' % (week[:4],week[5:]), None, week[:4], None, None, week, week, None, allow_packs=True, oneoff=True)
+        foundcom, prov = search.search_init('%s.%s.%s Weekly Pack' % (week[:4],week[5:7],week[8:]), None, week[:4], None, None, week, week, None, allow_packs=True, oneoff=True)
 
     download_0day.exposed = True
 
@@ -6439,6 +6453,103 @@ class WebInterface(object):
                                   'reason': x['reason']})
         return json.dumps(provider_list)
     blockProviders.exposed = True
+
+    def viewSpecificLog(self, log_id):
+        logger.info('log_id: %s' % log_id)
+        log_file = 'specific_%s.log' % log_id
+        # because log_id = rowid, we don't need to check the db - just loo at the file.
+        with open(os.path.join(mylar.CONFIG.LOG_DIR, log_file)) as f:
+            loglines = f.read()
+            loglines = loglines.replace('\n', '</br>')
+        return loglines
+    viewSpecificLog.exposed = True
+
+    def deleteSpecificLog(self, log_id, all=None):
+        logger.info('log_id: %s' % log_id)
+        logger.info('all: %s' % all)
+        myDB = db.DBConnection()
+        if all != log_id:
+            # for group entries
+            reflines = myDB.selectone(
+                           'SELECT error, func_name, filename, line_num'
+                           ' FROM exceptions_log WHERE rowid=?', [log_id]
+                       ).fetchone()
+            # get the actual matching components
+            error = reflines['error']
+            func_name = reflines['func_name']
+            filename = reflines['filename']
+            line_num = reflines['line_num']
+            # get all the ids in the db that match the components
+            morelines = myDB.select(
+                            'SELECT rowid from exceptions_log WHERE error=? AND'
+                            ' func_name=? AND filename=? AND line_num=?',
+                            [error, func_name, filename, line_num]
+                        )
+            errors_happened = False
+            for mn in morelines:
+                # remove the specific log file if present.
+                log_file = 'specific_%s.log' % mn['rowid']
+                try:
+                    os.remove(os.path.join(mylar.CONFIG.LOG_DIR, log_file))
+                except Exception as e:
+                    logger.warn(
+                        '[EXCEPTION-LOG-DELETION] Cannot find %s in the logs directory'
+                        ' of %s. Error returned: %s'
+                        % (log_file, mylar.CONFIG.LOG_DIR, e)
+                    )
+                try:
+                    # remove the specific log entry from the dB.
+                    myDB.action(
+                        'DELETE FROM exceptions_log WHERE rowid=?', [mn['rowid']]
+                    )
+                except Exception as e:
+                    errors_happened = True
+
+            if errors_happened:
+                return json.dumps({"status": "error"})
+            else:
+                return json.dumps({"status": "success"})
+
+        else:
+            # for specific entry
+            myDB.action('DELETE from exceptions_log WHERE rowid=?', [log_id])
+            log_file = 'specific_%s.log' % log_id
+            try:
+                os.remove(os.path.join(mylar.CONFIG.LOG_DIR, log_file))
+            except Exception as e:
+                logger.warn(
+                    '[EXCEPTION-LOG-DELETION] Cannot find %s in the logs directory of'
+                    ' %s. Error returned: %s' % (log_file, mylar.CONFIG.LOG_DIR, e)
+                )
+                return json.dumps({"status": "error"})
+            else:
+                logger.info('successfully deleted entry: %s' % log_id)
+                return json.dumps({"status": "success"})
+    deleteSpecificLog.exposed = True
+
+    def manageExceptions(self, **kwargs):
+        exception_list = []
+        myDB = db.DBConnection()
+        elist = myDB.select(
+            'SELECT count(*) as count, rowid, * FROM exceptions_log group by error,'
+            ' func_name, filename, line_num order by date DESC'
+            )
+        for et in elist:
+            countline = et['count']
+            if et['count'] == 1:
+                countline = ''
+            fileline = re.sub('.py', '', os.path.basename(et['filename'])).strip()
+            exception_list.append({'id':   et['rowid'],
+                                   'count': countline,
+                                   'date': et['date'],
+                                   'error': et['error'],
+                                   'error_text': et['error_text'],
+                                   'line_num': et['line_num'],
+                                   'func_name': et['func_name'],
+                                   'filename': fileline,
+                                   'traceback': et['traceback']})
+        return json.dumps(exception_list)
+    manageExceptions.exposed = True
 
     def unblock_provider(self, site, simple=True):
         logger.info('unblocking..')
@@ -6483,22 +6594,25 @@ class WebInterface(object):
                                 'a_size':  None,
                                 'a_id':  None})
          else:
-             filelocation = os.path.join(mylar.CONFIG.DDL_LOCATION, active['filename'])
-             #logger.fdebug('checking file existance: %s' % filelocation)
-             if os.path.exists(filelocation) is True:
-                 filesize = os.stat(filelocation).st_size
-                 cmath = int(float(filesize*100)/int(int(active['remote_filesize'])*100) * 100)
-                 #logger.fdebug('ACTIVE DDL: %s  %s  [%s]' % (active['filename'], cmath, 'Downloading'))
-                 return json.dumps({'status':      'Downloading',
-                                    'percent':     "%s%s" % (cmath, '%'),
-                                    'a_series':    active['series'],
-                                    'a_year':      active['year'],
-                                    'a_filename':  active['filename'],
-                                    'a_size':      active['size'],
-                                    'a_id':        active['id']})
+             if active['filename'] is not None:
+                 filelocation = os.path.join(mylar.CONFIG.DDL_LOCATION, active['filename'])
+                 #logger.fdebug('checking file existance: %s' % filelocation)
+                 if os.path.exists(filelocation) is True:
+                     filesize = os.stat(filelocation).st_size
+                     cmath = int(float(filesize*100)/int(int(active['remote_filesize'])*100) * 100)
+                     #logger.fdebug('ACTIVE DDL: %s  %s  [%s]' % (active['filename'], cmath, 'Downloading'))
+                     return json.dumps({'status':      'Downloading',
+                                        'percent':     "%s%s" % (cmath, '%'),
+                                        'a_series':    active['series'],
+                                        'a_year':      active['year'],
+                                        'a_filename':  active['filename'],
+                                        'a_size':      active['size'],
+                                        'a_id':        active['id']})
+                 statline = '%s does not exist.</br> This probably needs to be restarted (use the option in the GUI)' % filelocation
              else:
-             #    myDB.upsert('ddl_info', {'status': 'Incomplete'}, {'id': active['id']})
-                 return json.dumps({'a_id': active['id'], 'status': 'File does not exist in %s.</br> This probably needs to be restarted (use the option in the GUI)' % filelocation, 'percent': 0})
+                 infoline = '%s (%s)' % (active['series'], active['year'])
+                 statline = 'No filename assigned for %s.</br> This was probably never started successfully - you should restart the download (use the option in the GUI)' % infoline
+             return json.dumps({'a_id': active['id'], 'status': statline, 'percent': 0})
 
     check_ActiveDDL.exposed = True
 

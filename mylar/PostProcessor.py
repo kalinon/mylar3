@@ -544,8 +544,7 @@ class PostProcessor(object):
                                                 "One-Off":         False,
                                                 "ForcedMatch":     True})
                             logger.info('manual_list: %s' % manual_list)
-                            break
-
+                            continue
                         else:
                             tmpsql = "SELECT * FROM comics WHERE DynamicComicName IN ({seq}) COLLATE NOCASE".format(seq=','.join('?' * len(loopchk)))
                             comicseries = myDB.select(tmpsql, tuple(loopchk))
@@ -2231,13 +2230,7 @@ class PostProcessor(object):
                 #issnum = utf-8 will encode the infinity symbol without any help
                 issuenum = 'infinity'
             else:
-                issue_exceptions = ['A',
-                                    'B',
-                                    'C',
-                                    'X',
-                                    'O']
-
-                exceptionmatch = [x for x in issue_exceptions if x.lower() in issuenum.lower()]
+                exceptionmatch = [x for x in mylar.ISSUE_EXCEPTIONS if x.lower() in issuenum.lower()]
                 if exceptionmatch:
                     logger.fdebug('[FILECHECKER] We matched on : ' + str(exceptionmatch))
                     for x in exceptionmatch:
@@ -2627,7 +2620,11 @@ class PostProcessor(object):
                     if yyb != -1:
                         rem_issueid = nfilename[xyb+3:yyb]
                         logger.fdebug('issueid: %s' % rem_issueid)
-                        nfilename = '%s %s'.strip() % (nfilename[:xyb], nfilename[yyb+3:])
+                        two_add = re.sub(r'\s+', '', nfilename[yyb+3:]).strip()
+                        if any([two_add == '', two_add == ' ']):
+                            nfilename = '%s' % nfilename[:xyb].strip()
+                        else:
+                            nfilename = '%s %s' % (nfilename[:xyb].strip(), two_add)
                         logger.fdebug('issueid information [%s] removed successfully: %s' % (rem_issueid, nfilename))
 
             self._log("New Filename: %s" % nfilename)

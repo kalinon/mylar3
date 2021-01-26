@@ -875,7 +875,11 @@ def updateComicLocation():
                     comlocation = re.sub(ddir, ccdir, dlc).strip()
 
                 #regenerate the new path location so that it's os.dependent now.
-                com_done = re.sub('%&', os.sep.encode('unicode-escape'), comlocation).strip()
+                try:
+                    com_done = re.sub('%&', os.sep.encode().decode('unicode-escape'), comlocation).strip()
+                except Exception as e:
+                    logger.warn('[%s] error during conversion: %s' % (comlocation, e))
+                    com_done = comlocation.replace('%&', os.sep).strip()
 
                 comloc.append({"comlocation":  com_done,
                                "origlocation": dl['ComicLocation'],
@@ -2112,7 +2116,7 @@ def duplicate_filecheck(filename, ComicID=None, IssueID=None, StoryArcID=None, r
     except OSError as e:
         logger.warn('[DUPECHECK] File cannot be located in location specified. Something has moved or altered the name.')
         logger.warn('[DUPECHECK] Make sure if you are using ComicRN, you do not have Completed Download Handling enabled (or vice-versa). Aborting')
-        return
+        return {'action': None}
 
     if IssueID:
         dupchk = myDB.selectone("SELECT * FROM issues WHERE IssueID=?", [IssueID]).fetchone()
@@ -2120,7 +2124,7 @@ def duplicate_filecheck(filename, ComicID=None, IssueID=None, StoryArcID=None, r
         dupchk = myDB.selectone("SELECT * FROM annuals WHERE IssueID=?", [IssueID]).fetchone()
         if dupchk is None:
             logger.info('[DUPECHECK] Unable to find corresponding Issue within the DB. Do you still have the series on your watchlist?')
-            return
+            return {'action': None}
 
     series = myDB.selectone("SELECT * FROM comics WHERE ComicID=?", [dupchk['ComicID']]).fetchone()
 
@@ -2411,7 +2415,12 @@ def crc(filename):
 
     #speed in lieu of memory (file into memory entirely)
     #return "%X" % (zlib.crc32(open(filename, "rb").read()) & 0xFFFFFFFF)
-    filename = filename.encode(mylar.SYS_ENCODING)
+    try:
+       filename = filename.encode(mylar.SYS_ENCODING)
+    except UnicodeEncodeError:
+       filename = "invalid"
+       filename = filename.encode(mylar.SYS_ENCODING)
+    
     return hashlib.md5(filename).hexdigest()
 
 def issue_find_ids(ComicName, ComicID, pack, IssueNumber):
@@ -2901,7 +2910,6 @@ def weekly_info(week=None, year=None, current=None):
     if week:
         weeknumber = int(week)
         year = int(year)
-
         #monkey patch for 2018/2019 - week 52/week 0
         if all([weeknumber == 52, c_weeknumber == 51, c_weekyear == 2018]):
             weeknumber = 0
@@ -2917,6 +2925,14 @@ def weekly_info(week=None, year=None, current=None):
         elif all([weeknumber == 52, c_weeknumber == 0, c_weekyear == 2020]):
             weeknumber = 51
             year = 2019
+
+        #monkey patch for 2020/2021 - week 52/week 0
+        if all([int(weeknumber) == 0, c_weeknumber == 52, c_weekyear == 2020]):
+            weeknumber = 1
+            year = 2021
+        elif all([int(weeknumber) == 0, c_weeknumber == 1, c_weekyear == 2021]):
+            weeknumber = 52
+            year = 2020
 
         #view specific week (prev_week, next_week)
         startofyear = date(year,1,1)
@@ -2946,30 +2962,44 @@ def weekly_info(week=None, year=None, current=None):
             weeknumber = 51
             year = 2019
 
+        #monkey patch for 2020/2021 - week 52/week 0
+        if all([int(weeknumber) == 0, int(year) == 2021]) or all([int(weeknumber) == 52, int(year) == 2020]):
+            weeknumber = 52
+            year = 2020
+
         stweek = datetime.datetime.strptime(todaydate.strftime('%Y-%m-%d'), '%Y-%m-%d')
         startweek = stweek - timedelta(days = (stweek.weekday() + 1) % 7)
         midweek = startweek + timedelta(days = 3)
         endweek = startweek + timedelta(days = 6)
 
-    prev_week = int(weeknumber) - 1
-    prev_year = year
-    if prev_week < 0:
+    if all([weeknumber == 1, year == 2021]):
+        # make sure the arrow going back will hit the correct week in the previous year.
         prev_week = 52
-        prev_year = int(year) - 1
+        prev_year = 2020
+    else:
+        prev_week = int(weeknumber) - 1
+        prev_year = year
+        if prev_week < 0:
+            prev_week = 52
+            prev_year = int(year) - 1
 
     next_week = int(weeknumber) + 1
     next_year = year
     if next_week > 52:
         next_year = int(year) + 1
-        next_week = datetime.date(int(next_year),1,1).strftime("%U")
+        if all([weeknumber == 52, year == 2020]):
+            # make sure the next arrow will hit the correct week in the following year.
+            next_week = '1'
+        else:
+            next_week = datetime.date(int(next_year),1,1).strftime("%U")
 
     date_fmt = "%B %d, %Y"
     try:
-        con_startweek = "" + startweek.strftime(date_fmt) #.decode('utf-8')
-        con_endweek = "" + endweek.strftime(date_fmt) #.decode('utf-8')
+        con_startweek = "" + startweek.strftime(date_fmt)
+        con_endweek = "" + endweek.strftime(date_fmt)
     except:
-        con_startweek = "" + startweek.strftime(date_fmt) #.decode('cp1252')
-        con_endweek = "" + endweek.strftime(date_fmt) #.decode('cp1252')
+        con_startweek = "" + startweek.strftime(date_fmt)
+        con_endweek = "" + endweek.strftime(date_fmt)
 
     if mylar.CONFIG.WEEKFOLDER_LOC is not None:
         weekdst = mylar.CONFIG.WEEKFOLDER_LOC
@@ -3080,7 +3110,7 @@ def ddl_downloader(queue):
                                             'apicall':      True,
                                             'ddl':          True})
                 except Exception as e:
-                    logger.info('process error: %s [%s]' %(e, ddzstat))
+                    logger.error('process error: %s [%s]' %(e, ddzstat))
             elif all([ddzstat['success'] is True, mylar.CONFIG.POST_PROCESSING is False]):
                 logger.info('File successfully downloaded. Post Processing is not enabled - item retained here: %s' % os.path.join(ddzstat['path'],ddzstat['filename']))
             else:
@@ -3177,12 +3207,41 @@ def worker_main(queue):
 
 def nzb_monitor(queue):
     while True:
+        if mylar.RETURN_THE_NZBQUEUE.qsize() >= 1:
+            if mylar.USE_SABNZBD is True:
+                # this checks the sabnzbd queue to see if it's paused / unpaused.
+                sab_params = {
+                    'apikey': mylar.CONFIG.SAB_APIKEY,
+                    'mode': 'queue',
+                    'start': 0,
+                    'limit': 5,
+                    'search': None,
+                    'output': 'json',
+                }
+                s = sabnzbd.SABnzbd(params=sab_params)
+                sabresponse = s.sender(chkstatus=True)
+                # response will be: Paused = True, UnPaused = False
+                if sabresponse['status'] is False:
+                    while True:
+                        if mylar.RETURN_THE_NZBQUEUE.qsize() >= 1:
+                            qu_retrieve = mylar.RETURN_THE_NZBQUEUE.get(True)
+                            try:
+                                nzstat = s.historycheck(qu_retrieve)
+                                cdh_monitor(queue, qu_retrieve, nzstat, readd=True)
+                            except Exception as e:
+                                logger.error('Exception occured trying to re-add %s to queue: %s' % (qu_retrieve, e))
+                            time.sleep(5)
+                        else:
+                            break
+
         if queue.qsize() >= 1:
             item = queue.get(True)
             if item == 'exit':
                 logger.info('Cleaning up workers for shutdown')
                 break
+            tmp_apikey = item['queue'].pop('apikey')
             logger.info('Now loading from queue: %s' % item)
+            item['queue']['apikey'] = tmp_apikey
             if all([mylar.USE_SABNZBD is True, mylar.CONFIG.SAB_CLIENT_POST_PROCESSING is True]):
                 nz = sabnzbd.SABnzbd(item)
                 nzstat = nz.processor()
@@ -3192,35 +3251,52 @@ def nzb_monitor(queue):
             else:
                 logger.warn('There are no NZB Completed Download handlers enabled. Not sending item to completed download handling...')
                 break
-
-            known_nzb_id = item['nzo_id'] if (mylar.USE_SABNZBD is True) else item['NZBID']
-            if any([nzstat['status'] == 'file not found', nzstat['status'] == 'double-pp']):
-                logger.warn('Unable to complete post-processing call due to not finding file in the location provided. [%s]' % item)
-            elif nzstat['status'] == 'nzb removed':
-                logger.warn('NZB seems to have been removed from queue: %s' % known_nzb_id)
-            elif nzstat['status'] is False:
-                logger.info('Download %s failed. Requeue NZB to check later...' % known_nzb_id)
-                time.sleep(5)
-                mylar.NZB_QUEUE.put(item)
-            elif nzstat['status'] is True:
-                if nzstat['failed'] is False:
-                    logger.info('File successfully downloaded - now initiating completed downloading handling.')
-                else:
-                    logger.info('File failed either due to being corrupt or incomplete - now initiating completed failed downloading handling.')
-                try:
-                    mylar.PP_QUEUE.put({'nzb_name':     nzstat['name'],
-                                        'nzb_folder':   nzstat['location'],
-                                        'failed':       nzstat['failed'],
-                                        'issueid':      nzstat['issueid'],
-                                        'comicid':      nzstat['comicid'],
-                                        'apicall':      nzstat['apicall'],
-                                        'ddl':          False})
-                    #cc = process.Process(nzstat['name'], nzstat['location'], failed=nzstat['failed'])
-                    #nzpp = cc.post_process()
-                except Exception as e:
-                    logger.info('process error: %s' % e)
+            cdh_monitor(queue, item, nzstat)
         else:
             time.sleep(5)
+
+
+def cdh_monitor(queue, item, nzstat, readd=False):
+    known_nzb_id = item['nzo_id'] if (mylar.USE_SABNZBD is True) else item['NZBID']
+    if any([nzstat['status'] == 'file not found', nzstat['status'] == 'double-pp']):
+        logger.warn('Unable to complete post-processing call due to not finding file in the location provided. [%s]' % item)
+    elif nzstat['status'] == 'nzb removed' or 'unhandled status' in str(nzstat['status']).lower():
+        if readd is True:
+            # if the queue isn't empty, retry it like 5 times or until queue is empty
+            # if queue is empty, this could be a timing issue, so we'd have to recheck it one more time at least
+            # need to implement some kind of counter here for all of this ^^^
+            logger.warn('NZB seems to have been in a staging process within SABnzbd during attempt. Will requeue: %s.' % known_nzb_id)
+            mylar.RETURN_THE_NZBQUEUE.put(item)
+        else:
+            logger.warn('NZB seems to have been removed from queue: %s' % known_nzb_id)
+    elif nzstat['status'] == 'failed_in_sab':
+        logger.warn('Failure returned from SAB for %s for some reason. You should probably check your SABnzbd logs' % known_nzb_id)
+    elif nzstat['status'] == 'queue_paused':
+        # queue pause check for sabnzbd only atm.
+        if mylar.USE_SABNZBD is True:
+            logger.info('[PAUSED_SAB_QUEUE] adding %s to a temporary queue that will fire off when SABnzbd is unpaused' % item)
+            mylar.RETURN_THE_NZBQUEUE.put(item)
+    elif nzstat['status'] is False:
+        logger.info('Download %s failed. Requeue NZB to check later...' % known_nzb_id)
+        time.sleep(5)
+        if item not in queue.queue:
+            mylar.NZB_QUEUE.put(item)
+    elif nzstat['status'] is True:
+        if nzstat['failed'] is False:
+            logger.info('File successfully downloaded - now initiating completed downloading handling.')
+        else:
+            logger.info('File failed either due to being corrupt or incomplete - now initiating completed failed downloading handling.')
+        try:
+            mylar.PP_QUEUE.put({'nzb_name':     nzstat['name'],
+                                'nzb_folder':   nzstat['location'],
+                                'failed':       nzstat['failed'],
+                                'issueid':      nzstat['issueid'],
+                                'comicid':      nzstat['comicid'],
+                                'apicall':      nzstat['apicall'],
+                                'ddl':          False})
+        except Exception as e:
+            logger.error('process error: %s' % e)
+    return
 
 def script_env(mode, vars):
     #mode = on-snatch, pre-postprocess, post-postprocess
@@ -4085,6 +4161,46 @@ def DateAddedFix():
     for an in annuals:
         myDB.upsert("annuals", {'DateAdded': DateAdded}, {'IssueID': an[0]})
 
+
+def statusChange(status_from, status_to, comicid=None, bulk=False, api=True):
+    myDB = db.DBConnection()
+    the_list = []
+    if bulk is False: #type(comicid) != list:
+        sc = myDB.select("SELECT IssueID FROM issues WHERE ComicID=? AND Status=?", [comicid, status_from])
+        for s in sc:
+            the_list.append(s[0])
+    else:
+        if comicid == 'All':
+            sc = myDB.select("SELECT IssueID FROM issues WHERE Status=?", [comicid, status_from])
+            for s in sc:
+                the_list.append(s[0])
+        else:
+            for x in comicid:
+                sc = myDB.select("SELECT IssueID FROM issues WHERE ComicID=? AND Status=?", [x, status_from])
+                for s in sc:
+                    the_list.append(s[0])
+
+    logger.info('the_list: %s' % the_list)
+    #for genlist in chunker(the_list, 200):
+    #    tmpsql = "SELECT IssueID FROM issues WHERE Status=? AND ComicID in ({seq})".format(status_from, seq=','.join(['?'] *(len(genlist) -1)))
+    #    chkthis = myDB.upsert("issues", {'Status': status_to}, dict(myDB.select(tmpsql, genlist))) #select(tmpsql, genlist)
+    #    logger.info('succeeded')
+
+    #this probably won't scale well, but atm it's the best that can be done
+    cnt=0
+    dlist = []
+    for x in the_list:
+        try:
+            myDB.upsert("issues", {'Status': status_to}, {'IssueID': x, 'Status': status_from})
+        except Exception as e:
+            pass
+        else:
+            cnt+=1
+
+    logger.info('Updated %s Issues from a status of %s to %s' % (cnt, status_from, status_to))
+    #upto.execute("UPDATE issues SET Status = ? WHERE (?)", [status_to, tmpsql])
+
+
 def file_ops(path,dst,arc=False,one_off=False):
 #    # path = source path + filename
 #    # dst = destination path + filename
@@ -4227,6 +4343,74 @@ def file_ops(path,dst,arc=False,one_off=False):
 
     else:
         return False
+
+def log_that_exception(except_info):
+
+    #snip the log here and get the last 100 lines as quick leadup glance.
+    leadup = tail_that_log()
+
+    #logger.info('[LEADUP_LOG] %s' % leadup)
+    gather_info = {'comicname':   except_info.get('comicname', None),
+                   'issuenumber': except_info.get('issuenumber', None),
+                   'seriesyear':  except_info.get('seriesyear', None),
+                   'issueid':     except_info.get('issueid', None),
+                   'comicid':     except_info.get('comicid', None),
+                   'searchmode':  except_info.get('mode', None),
+                   'booktype':    except_info.get('booktype', None),
+                   'filename':    except_info.get('filename', None),
+                   'line_num':    except_info.get('line_num', None),
+                   'func_name':   except_info.get('func_name', None),
+                   'error_text':  except_info.get('err_text', None),
+                   'error':       except_info.get('err', None),
+                   'traceback':   except_info.get('traceback', None)}
+
+    #write it to the exceptions table.
+    logdate = now()
+    myDB = db.DBConnection()
+    myDB.upsert("exceptions_log", gather_info, {'date': logdate})
+
+    #write the leadup log lines that were tailed above to the external file here...
+    fileline = myDB.selectone("SELECT rowid from exceptions_log where date = ?", [logdate]).fetchone()
+    with open(os.path.join(mylar.CONFIG.LOG_DIR, 'specific_' + str(fileline['rowid']) + '.log'), 'w') as f:
+        f.writelines(leadup)
+        f.write(except_info.get('traceback', None))
+
+def tail_that_log():
+    """Tail a file and get X lines from the end"""
+    # place holder for the lines found
+    lines_found = []
+
+    f = open(os.path.join(mylar.CONFIG.LOG_DIR,'mylar.log'), 'r')
+    lines = 100
+    buffer = 4098
+
+    # block counter will be multiplied by buffer
+    # to get the block size from the end
+    block_counter = -1
+
+    # loop until we find X lines
+    while len(lines_found) <= lines:
+        try:
+            f.seek(block_counter * buffer, os.SEEK_END)
+        except IOError:  # either file is too small, or too many lines requested
+            f.seek(0)
+            lines_found = f.readlines()
+            break
+
+        lines_found = f.readlines()
+
+        # we found enough lines, get out
+        # Removed this line because it was redundant the while will catch
+        # it, I left it for history
+        # if len(lines_found) > lines:
+        #    break
+
+        # decrement the block counter to get the
+        # next X bytes
+        block_counter -= 1
+
+    return lines_found[-lines:]
+
 
 from threading import Thread
 
