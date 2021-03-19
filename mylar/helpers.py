@@ -135,9 +135,11 @@ def today():
     yyyymmdd = datetime.date.isoformat(today)
     return yyyymmdd
 
-def now():
+def now(format_string=None):
     now = datetime.datetime.now()
-    return now.strftime("%Y-%m-%d %H:%M:%S")
+    if format_string is None:
+        format_string = "%Y-%m-%d %H:%M:%S"
+    return now.strftime(format_string)
 
 def utctimestamp():
     return time.time()
@@ -1928,7 +1930,7 @@ def manualArc(issueid, reading_order, storyarcid):
                            "ReadingOrder":   issarc['ReadingOrder']})
 
 
-    arc_results = mylar.cv.getComic(comicid=None, type='issue', issueid=None, arcid=storyarcid, arclist='M' + str(issueid))
+    arc_results = mylar.cv.getComic(comicid=None, rtype='issue', issueid=None, arcid=storyarcid, arclist='M' + str(issueid))
     arcval = arc_results['issuechoice'][0]
     comicname = arcval['ComicName']
     st_d = mylar.filechecker.FileChecker(watchcomic=comicname)
@@ -1967,7 +1969,7 @@ def manualArc(issueid, reading_order, storyarcid):
     storedate = str(arcval['Store_Date'])
     int_issnum = issuedigits(issnum)
 
-    comicid_results = mylar.cv.getComic(comicid=None, type='comicyears', comicidlist=cidlist)
+    comicid_results = mylar.cv.getComic(comicid=None, rtype='comicyears', comicidlist=cidlist)
     seriesYear = 'None'
     issuePublisher = 'None'
     seriesVolume = 'None'
@@ -2707,14 +2709,15 @@ def arcformat(arc, spanyears, publisher):
 
     tmp_folderformat = mylar.CONFIG.ARC_FOLDERFORMAT
 
-    if publisher == 'None':
-        chunk_f_f = re.sub('\$publisher', '', tmp_folderformat)
-        chunk_f = re.compile(r'\s+')
-        tmp_folderformat = chunk_f.sub(' ', chunk_f_f)
+    if tmp_folderformat is not None:
+        if publisher == 'None':
+            chunk_f_f = re.sub('\$publisher', '', tmp_folderformat)
+            chunk_f = re.compile(r'\s+')
+            tmp_folderformat = chunk_f.sub(' ', chunk_f_f)
 
 
     if any([tmp_folderformat == '', tmp_folderformat is None]):
-        arcpath = arcdir
+        arcpath = replace_all('$arc ($spanyears)', values)
     else:
         arcpath = replace_all(tmp_folderformat, values)
 
@@ -3239,9 +3242,14 @@ def nzb_monitor(queue):
             if item == 'exit':
                 logger.info('Cleaning up workers for shutdown')
                 break
-            tmp_apikey = item['queue'].pop('apikey')
-            logger.info('Now loading from queue: %s' % item)
-            item['queue']['apikey'] = tmp_apikey
+            try:
+                tmp_apikey = item['queue'].pop('apikey')
+                logger.info('Now loading from queue: %s' % item)
+            except Exception:
+                #nzbget doesn't pass the queue field. So just let it fly.
+                logger.info('Now loading from queue: %s' % item)
+            else:
+                item['queue']['apikey'] = tmp_apikey
             if all([mylar.USE_SABNZBD is True, mylar.CONFIG.SAB_CLIENT_POST_PROCESSING is True]):
                 nz = sabnzbd.SABnzbd(item)
                 nzstat = nz.processor()
@@ -3638,7 +3646,16 @@ def job_management(write=False, job=None, last_run_completed=None, current_run=N
                             if 'Status Updater' in jb.lower():
                                continue
                             elif job == 'DB Updater' and 'update' in jb.lower():
-                                nextrun_stamp = utctimestamp() + (int(mylar.DBUPDATE_INTERVAL) * 60)
+                                if mylar.DB_BACKFILL is True:
+                                    #if backfilling, set it for every 15 mins
+                                    nextrun_stamp = utctimestamp() + (mylar.CONFIG.BACKFILL_TIMESPAN * 60)
+                                    logger.fdebug(
+                                        '[BACKFILL-UPDATER] Will fire off every %s'
+                                        ' minutes until backlog is decimated.'
+                                        % (mylar.CONFIG.BACKFILL_TIMESPAN)
+                                    )
+                                else:
+                                    nextrun_stamp = utctimestamp() + (int(mylar.DBUPDATE_INTERVAL) * 60)
                                 jobstore = jbst
                                 break
                             elif job == 'Auto-Search' and 'search' in jb.lower():
