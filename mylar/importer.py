@@ -29,6 +29,7 @@ import imghdr
 import sqlite3
 import cherrypy
 import requests
+import threading
 
 import mylar
 from mylar import logger, filers, helpers, db, mb, cv, parseit, filechecker, search, updater, moveit, comicbookdb
@@ -47,6 +48,15 @@ def is_exists(comicid):
     else:
         return False
 
+def addvialist():
+    if mylar.ADD_LIST:
+        cnt = 1
+        for x in mylar.ADD_LIST:
+            logger.info('[MASS-ADD][%s/%s] Now adding %s [%s] to your watchlist' % (cnt, len(mylar.ADD_LIST), x['series'], x['comicid']))
+            addComictoDB(x['comicid'])
+            #mylar.ADD_LIST.pop(x)
+            cnt += 1
+        logger.info('[MASS-ADD] Succesfully added %s series to your watchlist' % (cnt-1))
 
 def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=None, calledfrom=None, annload=None, chkwant=None, issuechk=None, issuetype=None, latestissueinfo=None, csyear=None, fixed_type=None):
     myDB = db.DBConnection()
@@ -54,7 +64,44 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
     controlValueDict = {"ComicID":     comicid}
 
     dbcomic = myDB.selectone('SELECT * FROM comics WHERE ComicID=?', [comicid]).fetchone()
-    if dbcomic is None:
+    bypass = True
+    if dbcomic is not None:
+        if chkwant is not None:
+            logger.fdebug('ComicID: ' + str(comicid) + ' already exists. Not adding from the future pull list at this time.')
+            return 'Exists'
+        if dbcomic['Status'] == 'Active':
+            series_status = 'Active'
+        elif dbcomic['Status'] == 'Paused':
+            series_status = 'Paused'
+        else:
+            series_status = 'Loading'
+
+        newValueDict = {"Status":   "Loading"}
+        comlocation = dbcomic['ComicLocation']
+        if comlocation is None:
+            bypass = False
+        else:
+            lastissueid = dbcomic['LatestIssueID']
+            serieslast_updated = dbcomic['LastUpdated']
+            aliases = dbcomic['AlternateSearch']
+            logger.info('aliases currently: %s' % aliases)
+            old_description = dbcomic['DescriptionEdit']
+
+            FirstImageSize = dbcomic['FirstImageSize']
+
+            if not latestissueinfo:
+                latestissueinfo = []
+                latestissueinfo.append({"latestiss": dbcomic['LatestIssue'],
+                                        "latestdate":  dbcomic['LatestDate']})
+
+            if mylar.CONFIG.CREATE_FOLDERS is True:
+                checkdirectory = filechecker.validateAndCreateDirectory(comlocation, True)
+                if not checkdirectory:
+                    logger.warn('Error trying to validate/create directory. Aborting this process at this time.')
+                    return {'status': 'incomplete'}
+            oldcomversion = dbcomic['ComicVersion'] #store the comicversion and chk if it exists before hammering.
+
+    if dbcomic is None or bypass is False:
         newValueDict = {"ComicName":   "Comic ID: %s" % (comicid),
                 "Status":   "Loading"}
         if all([imported is not None, imported != 'None', mylar.CONFIG.IMP_PATHS is True]):
@@ -70,37 +117,8 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
         lastissueid = None
         aliases = None
         FirstImageSize = 0
-    else:
-        if chkwant is not None:
-            logger.fdebug('ComicID: ' + str(comicid) + ' already exists. Not adding from the future pull list at this time.')
-            return 'Exists'
-        if dbcomic['Status'] == 'Active':
-            series_status = 'Active'
-        elif dbcomic['Status'] == 'Paused':
-            series_status = 'Paused'
-        else:
-            series_status = 'Loading'
+        old_description = None
 
-        newValueDict = {"Status":   "Loading"}
-        comlocation = dbcomic['ComicLocation']
-        lastissueid = dbcomic['LatestIssueID']
-        serieslast_updated = dbcomic['LastUpdated']
-        aliases = dbcomic['AlternateSearch']
-        logger.info('aliases currently: %s' % aliases)
-
-        FirstImageSize = dbcomic['FirstImageSize']
-
-        if not latestissueinfo:
-            latestissueinfo = []
-            latestissueinfo.append({"latestiss": dbcomic['LatestIssue'],
-                                    "latestdate":  dbcomic['LatestDate']})
-
-        if mylar.CONFIG.CREATE_FOLDERS is True:
-            checkdirectory = filechecker.validateAndCreateDirectory(comlocation, True)
-            if not checkdirectory:
-               logger.warn('Error trying to validate/create directory. Aborting this process at this time.')
-               return {'status': 'incomplete'}
-        oldcomversion = dbcomic['ComicVersion'] #store the comicversion and chk if it exists before hammering.
     myDB.upsert("comics", newValueDict, controlValueDict)
 
     #run the re-sortorder here in order to properly display the page
@@ -108,7 +126,7 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
         helpers.ComicSort(comicorder=mylar.COMICSORT, imported=comicid)
 
     # we need to lookup the info for the requested ComicID in full now
-    comic = cv.getComic(comicid, 'comic')
+    comic = cv.getComic(comicid, 'comic', series=True)
 
     if not comic:
         logger.warn('Error fetching comic. ID for : ' + comicid)
@@ -169,10 +187,14 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
             #we'll defer this until later when we grab all the issues and then figure it out
             logger.info('Uh-oh. I cannot find a Series Year for this series. I am going to try analyzing deeper.')
             SeriesYear = cv.getComic(comicid, 'firstissue', comic['FirstIssueID'])
+            if not SeriesYear:
+                return
             if SeriesYear == '0000':
                 logger.info('Ok - I could not find a Series Year at all. Loading in the issue data now and will figure out the Series Year.')
                 CV_NoYearGiven = "yes"
                 issued = cv.getComic(comicid, 'issue')
+                if not issued:
+                    return
                 SeriesYear = issued['firstdate'][:4]
         else:
             SeriesYear = gcdinfo['SeriesYear']
@@ -289,14 +311,19 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
                     filechecker.setperms(comiclocal)
             except IOError as e:
                 logger.error('[%s] Unable to save cover (%s) into series directory (%s) at this time.' % (e, cimage, comiclocal))
+
     else:
         ComicImage = None
 
-    #for description ...
-    #Cdesc = helpers.cleanhtml(comic['ComicDescription'])
-    #cdes_find = Cdesc.find("Collected")
-    #cdes_removed = Cdesc[:cdes_find]
-    #logger.fdebug('description: ' + cdes_removed)
+    # store the cover for the series as a thumbnail as folder.jpg if option is enabled.
+    if mylar.CONFIG.COVER_FOLDER_LOCAL is True:
+        if comic['ComicImageThumbnail'] != 'None':
+            if not os.path.exists(os.path.join(comlocation, 'folder.jpg')):
+                th_check = helpers.getImage(comicid, comic['ComicImageThumbnail'], thumbnail_path=os.path.join(comlocation, 'folder.jpg'))
+                if th_check['status'] == 'success':
+                    logger.fdebug('Thumbnail image successfully stored as %s' % os.path.join(comlocation, 'folder.jpg'))
+        else:
+            logger.fdebug('Thumbnail not present on CV. Not storing locallly.')
 
     #dynamic-name generation here.
     as_d = filechecker.FileChecker(watchcomic=comic['ComicName'])
@@ -332,6 +359,17 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
     else:
         booktype = comic['Type']
 
+    #for description ...
+    #Cdesc = helpers.cleanhtml(comic['ComicDescription'])
+    Cdesc = comic['ComicDescription']
+    if Cdesc != 'None':
+        cdes_find = Cdesc.find('Collected')
+        cdes_removed = Cdesc[:cdes_find]
+    else:
+        cdes_removed = None
+
+    #logger.fdebug('description: ' + cdes_removed)
+
     controlValueDict = {"ComicID":        comicid}
     newValueDict = {"ComicName":          comic['ComicName'],
                     "ComicSortName":      sortname,
@@ -346,7 +384,9 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
                     "ComicVersion":       comicVol,
                     "ComicLocation":      comlocation,
                     "ComicPublisher":     comic['ComicPublisher'],
-#                    "Description":       Cdesc, #.dencode('utf-8', 'replace'),
+                    "Description":        cdes_removed,
+                    "DescriptionEdit":    old_description,
+                    "PublisherImprint":   comic['PublisherImprint'],
                     "DetailURL":          comic['ComicURL'],
                     "AlternateSearch":    aliases,
 #                    "ComicPublished":    gcdinfo['resultPublished'],
@@ -382,6 +422,75 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
     if issuedata is None:
         logger.warn('Unable to complete Refreshing / Adding issue data - this WILL create future problems if not addressed.')
         return {'status': 'incomplete'}
+    else:
+
+        #write out series.json here if enabled.
+        if mylar.CONFIG.SERIES_METADATA_LOCAL is True:
+            description_load = None
+            if os.path.exists(os.path.join(comlocation, 'series.json')):
+                try:
+                    with open(os.path.join(comlocation, 'series.json')) as j_file:
+                        metainfo = json.load(j_file)
+                        logger.info('metainfo_loaded: %s' % (metainfo,))
+                    description_load = metainfo['metadata'][0]['description']
+                except Exception as e:
+                    try:
+                        description_load = metainfo['metadata'][0]['description_formatted']
+                    except Exception as e:
+                        logger.info('No description found in metadata. Reloading from dB if available.[error: %s]' % e)
+
+            c_date = datetime.date(int(importantdates['LatestDate'][:4]), int(importantdates['LatestDate'][5:7]), 1)
+            n_date = datetime.date.today()
+            recentchk = (n_date - c_date).days
+            if importantdates['NewPublish'] is True:
+                seriesStatus = 'Continuing'
+            else:
+                #do this just incase and as an extra measure of accuracy hopefully.
+                if recentchk < 55:
+                    seriesStatus = 'Continuing'
+                else:
+                    seriesStatus = 'Ended'
+
+            clean_issue_list = None
+            if comic['Issue_List'] != 'None':
+                clean_issue_list = comic['Issue_List']
+
+            if description_load is not None:
+                cdes_removed = re.sub(r'\n', '', description_load).strip()
+                cdes_formatted = description_load
+            elif old_description is not None:
+                cdes_removed = re.sub(r'\n', ' ', old_description).strip()
+                cdes_formatted = old_description
+            else:
+                cdes_formatted = None # CV doesn't format their descriptions.
+
+            c_image = comic
+            metadata = {}
+            metadata['metadata'] = [(
+                                        {'type': 'comicSeries',
+                                         'publisher': comic['ComicPublisher'],
+                                         'imprint': comic['PublisherImprint'],
+                                         'name': comic['ComicName'],
+                                         'comicid': comicid,
+                                         'year': SeriesYear,
+                                         'description_text': cdes_removed,
+                                         'description_formatted': cdes_formatted,
+                                         'volume': comicVol,
+                                         'booktype': booktype,
+                                         'collects': clean_issue_list,
+                                         'ComicImage': comic.get('ComicImage', None),
+                                         'total_issues': comicIssues,
+                                         'publication_run': importantdates['ComicPublished'],
+                                         'status': seriesStatus}
+            )]
+
+            try:
+                with open(os.path.join(comlocation, 'series.json'), 'w', encoding='utf-8') as outfile:
+                    json.dump(metadata, outfile, indent=4, ensure_ascii=False)
+            except Exception as e:
+                logger.error('Unable to write series.json to %s. Error returned: %s' % (comlocation, e))
+            else:
+                logger.fdebug('Successfully written series.json file to %s' % comlocation)
 
     if any([calledfrom is None, calledfrom == 'maintenance']):
         issue_collection(issuedata, nostatus='False', serieslast_updated=serieslast_updated)
@@ -463,7 +572,7 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
             chkstats = myDB.selectone("SELECT * FROM issues WHERE ComicID=? AND Int_IssueNumber=?", [comicid, helpers.issuedigits(latestiss)]).fetchone()
             if chkstats is None:
                 if mylar.CONFIG.ANNUALS_ON:
-                    chkstats = myDB.selectone("SELECT * FROM annuals WHERE ComicID=? AND Int_IssueNumber=?", [comicid, helpers.issuedigits(latestiss)]).fetchone()
+                    chkstats = myDB.selectone("SELECT * FROM annuals WHERE ComicID=? AND Int_IssueNumber=? AND NOT Deleted", [comicid, helpers.issuedigits(latestiss)]).fetchone()
 
             if chkstats:
                 logger.fdebug('latestissue status: ' + chkstats['Status'])
@@ -486,7 +595,7 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
                                             'Status':        issr['Status']
                                            })
                     if mylar.CONFIG.ANNUALS_ON:
-                        an_results = myDB.select("SELECT * FROM annuals WHERE ComicID=? AND Status='Wanted'", [comicid])
+                        an_results = myDB.select("SELECT * FROM annuals WHERE ComicID=? AND Status='Wanted' AND NOT Deleted", [comicid])
                         if an_results:
                             for ar in an_results:
                                 results.append({'IssueID':       ar['IssueID'],
@@ -970,7 +1079,7 @@ def issue_collection(issuedata, nostatus, serieslast_updated=None):
                         elif issue_week >= now_week and mylar.CONFIG.AUTOWANT_UPCOMING:
                             #logger.fdebug(str(datechk) + ' >= ' + str(nowtime))
                             newValueDict['Status'] = "Wanted"
-                        elif all([serieslast_updated < int(dk), mylar.CONFIG.AUTOWANT_UPCOMING is True]):
+                        elif all([int(re.sub('-', '', serieslast_updated).strip()) < int(dk), mylar.CONFIG.AUTOWANT_UPCOMING is True]):
                             logger.info('Autowant upcoming triggered for issue #%s' % issue['Issue_Number'])
                             newValueDict['Status'] = "Wanted"
                         else:
@@ -997,7 +1106,7 @@ def issue_collection(issuedata, nostatus, serieslast_updated=None):
                 return
 
 
-def manualAnnual(manual_comicid=None, comicname=None, comicyear=None, comicid=None, annchk=None, manualupd=False):
+def manualAnnual(manual_comicid=None, comicname=None, comicyear=None, comicid=None, annchk=None, manualupd=False, deleted=False):
         #called when importing/refreshing an annual that was manually added.
         myDB = db.DBConnection()
 
@@ -1008,13 +1117,17 @@ def manualAnnual(manual_comicid=None, comicname=None, comicyear=None, comicid=No
             issueid = manual_comicid
             logger.fdebug(str(issueid) + ' added to series list as an Annual')
             sr = cv.getComic(manual_comicid, 'comic')
+            if sr is None:
+                return
             logger.fdebug('Attempting to integrate ' + sr['ComicName'] + ' (' + str(issueid) + ') to the existing series of ' + comicname + '(' + str(comicyear) + ')')
-            if len(sr) is None or len(sr) == 0:
+            if len(sr) == 0:
                 logger.fdebug('Could not find any information on the series indicated : ' + str(manual_comicid))
                 return
             else:
                 n = 0
                 issued = cv.getComic(re.sub('4050-', '', manual_comicid).strip(), 'issue')
+                if not issued:
+                    return
                 if int(sr['ComicIssues']) == 0 and len(issued['issuechoice']) == 1:
                     noissues = 1
                 else:
@@ -1057,7 +1170,8 @@ def manualAnnual(manual_comicid=None, comicname=None, comicyear=None, comicid=No
                                    'ReleaseDate':      str(firstval['Store_Date']),
                                    'DigitalDate':      str(firstval['Digital_Date']),
                                    'Status':           astatus,
-                                   'ReleaseComicName': sr['ComicName']})
+                                   'ReleaseComicName': sr['ComicName'],
+                                   'Deleted':          deleted})
                     n+=1
 
             if manualupd is True:
@@ -1075,7 +1189,8 @@ def manualAnnual(manual_comicid=None, comicname=None, comicyear=None, comicid=No
                        "ReleaseComicID":   ann['ReleaseComicID'],  #this is the series ID for the annual(s)
                        "ComicName":        ann['ComicName'], #series ComicName
                        "ReleaseComicName": ann['ReleaseComicName'], #series ComicName for the manual_comicid
-                       "Status":           ann['Status']}
+                       "Status":           ann['Status'],
+                       "Deleted":          ann['Deleted']}
                        #need to add in the values for the new series to be added.
                        #"M_ComicName":    sr['ComicName'],
                        #"M_ComicID":      manual_comicid}
@@ -1099,7 +1214,7 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
     #to facilitate independent calls to updateissuedata ONLY, account for data not available and get it.
     #chkType comes from the weeklypulllist - either 'annual' or not to distinguish annuals vs. issues
     if comicIssues is None:
-        comic = cv.getComic(comicid, 'comic')
+        comic = cv.getComic(comicid, 'comic', series=True)
         if comic is None:
             logger.warn('Error retrieving from ComicVine - either the site is down or you are not using your own CV API key')
             return
@@ -1144,6 +1259,9 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
                 firstval = issued['issuechoice'][n]
             except IndexError:
                 break
+            except Exception as e:
+                logger.warn('Unable to parse issue details for series - ComicVine is probably having problems.')
+                return
             try:
                 cleanname = firstval['Issue_Name'] #helpers.cleanName(firstval['Issue_Name'])
             except:
@@ -1277,8 +1395,16 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
                                 logger.fdebug('this does not have an issue # that I can parse properly.')
                                 return
                         else:
+                            # Matches "number -&/\ number"
+                            match = re.match(r"(?P<first>\d+)\s?[-&/\\]\s?(?P<last>\d+)", issnum)
                             if int_issnum is not None:
-                                pass 
+                                pass
+                            elif match:
+                                first_num, last_num = map(int, match.groups())
+                                if last_num > first_num:
+                                    int_issnum = (first_num * 1000) + int(((last_num - first_num) * .5) * 1000)
+                                else:
+                                    int_issnum = (first_num * 1000) + (.5 * 1000)
                             elif issnum == '9-5':
                                 issnum = '9\xbd'
                                 logger.fdebug('issue: 9-5 is an invalid entry. Correcting to : ' + issnum)
@@ -1293,6 +1419,8 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
                                 int_issnum = (112 * 1000) + (.5 * 1000)
                             elif issnum == '14-16':
                                 int_issnum = (15 * 1000) + (.5 * 1000)
+                            elif issnum == '380/381':
+                                int_issnum = (380 * 1000) + (.5 * 1000)
                             elif issnum.lower() == 'preview':
                                 inu = 0
                                 ordtot = 0
@@ -1381,6 +1509,13 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
         else:
             stmonth = helpers.fullmonth(firstdate[5:7])
 
+        #if the store date exists and is newer than the pub date - use the store date for ended calcs.
+        if all([latest_stdate is not None, latest_stdate != '0000-00-00']):
+            p_date = datetime.date(int(latestdate[:4]), int(latestdate[5:7]), 1)
+            s_date = datetime.date(int(latest_stdate[:4]), int(latest_stdate[5:7]), 1)
+            if s_date > p_date:
+               latestdate = latest_stdate
+
         ltyear = re.sub('/s', '', latestdate[:4])
         if latestdate[5:7] == '00':
             ltmonth = "?"
@@ -1419,7 +1554,10 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
             publishfigure = str(styear) + ' - ' + str(lastpubdate)
         else:
             newpublish = False
-            publishfigure = str(stmonth) + ' ' + str(styear) + ' - ' + str(lastpubdate)
+            if lastpubdate == '%s %s' % (stmonth, styear):
+                publishfigure = '%s %s' % (stmonth, styear)
+            else:
+                publishfigure = '%s %s - %s' % (stmonth, styear, lastpubdate)
 
         if stmonth == '?' and styear == '?' and lastpubdate =='0000' and comicIssues == '0':
             logger.info('No available issue data - I believe this is a NEW series.')
@@ -1451,12 +1589,14 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
     importantdates['LatestStoreDate'] = latest_stdate
     importantdates['LastPubDate'] = lastpubdate
     importantdates['SeriesStatus'] = 'Active'
+    importantdates['ComicPublished'] = publishfigure
+    importantdates['NewPublish'] = newpublish
 
     if calledfrom == 'weeklycheck':
         return weeklyissue_check
 
     elif len(issuedata) >= 1 and not calledfrom  == 'dbupdate':
-        return {'issuedata': issuedata, 
+        return {'issuedata': issuedata,
                 'annualchk': annualchk,
                 'importantdates': importantdates,
                 'nostatus':  False}
@@ -1489,7 +1629,8 @@ def annual_check(ComicName, SeriesYear, comicid, issuetype, issuechk, annualslis
                      'ReleaseComicID':   annthis['ReleaseComicID'],
                      'ReleaseComicName': annthis['ReleaseComicName'],
                      'ComicID':          annthis['ComicID'],
-                     'ComicName':        annthis['ComicName']
+                     'ComicName':        annthis['ComicName'],
+                     'Deleted':          bool(annthis['Deleted'])
                      })
 
         if annload is None:
@@ -1498,7 +1639,7 @@ def annual_check(ComicName, SeriesYear, comicid, issuetype, issuechk, annualslis
             for manchk in annload:
                 if manchk['ReleaseComicID'] is not None or manchk['ReleaseComicID'] is not None:  #if it exists, then it's a pre-existing add
                     #print str(manchk['ReleaseComicID']), comic['ComicName'], str(SeriesYear), str(comicid)
-                    annualslist += manualAnnual(manchk['ReleaseComicID'], ComicName, SeriesYear, comicid, manualupd=True)
+                    annualslist += manualAnnual(manchk['ReleaseComicID'], ComicName, SeriesYear, comicid, manualupd=True, deleted=manchk['Deleted'])
                 annualids.append(manchk['ReleaseComicID'])
 
         annualcomicname = re.sub('[\,\:]', '', ComicName)
@@ -1512,8 +1653,10 @@ def annual_check(ComicName, SeriesYear, comicid, issuetype, issuechk, annualslis
         annualyear = SeriesYear  # no matter what, the year won't be less than this.
         logger.fdebug('[IMPORTER-ANNUAL] - Annual Year:' + str(annualyear))
         sresults = mb.findComic(annComicName, mode, issue=None)
+        if not sresults:
+            return
 
-        annual_types_ignore = {'paperback', 'collecting', 'reprints', 'collected edition', 'print edition', 'tpb', 'available in print', 'collects'}
+        annual_types_ignore = {'paperback', 'collecting', 'reprinting', 'reprints', 'collected edition', 'print edition', 'tpb', 'available in print', 'collects'}
 
         if len(sresults) > 0:
             logger.fdebug('[IMPORTER-ANNUAL] - there are ' + str(len(sresults)) + ' results.')
@@ -1537,7 +1680,7 @@ def annual_check(ComicName, SeriesYear, comicid, issuetype, issuechk, annualslis
                         num_res+=1 # need to manually increment since not a for-next loop
                         continue
                     issued = cv.getComic(issueid, 'issue')
-                    if len(issued) is None or len(issued) == 0:
+                    if issued is None or len(issued) == 0:
                         logger.fdebug('[IMPORTER-ANNUAL] - Could not find any annual information...')
                         pass
                     else:
@@ -1599,6 +1742,7 @@ def annual_check(ComicName, SeriesYear, comicid, issuetype, issuechk, annualslis
                                                 "ComicName":        ComicName,
                                                 "ReleaseComicID":   re.sub('4050-', '', firstval['Comic_ID']).strip(),
                                                 "ReleaseComicName": sr['name'],
+                                                "Deleted":          False,
                                                 "Status":           astatus})
 
                             #myDB.upsert("annuals", newVals, newCtrl)
@@ -1617,10 +1761,12 @@ def annual_check(ComicName, SeriesYear, comicid, issuetype, issuechk, annualslis
             manualAnnual(annchk=annualslist)
             return annualslist
 
-        elif len(sresults) == 0 or len(sresults) is None:
+        elif sresults is None or len(sresults) == 0:
             logger.fdebug('[IMPORTER-ANNUAL] - No results, removing the year from the agenda and re-querying.')
             sresults = mb.findComic(annComicName, mode, issue=None)
-            if len(sresults) == 1:
+            if not sresults:
+                return
+            elif len(sresults) == 1:
                 sr = sresults[0]
                 logger.fdebug('[IMPORTER-ANNUAL] - ' + str(comicid) + ' found. Assuming it is part of the greater collection.')
             else:
@@ -1640,6 +1786,8 @@ def image_it(comicid, latestissueid, comlocation, ComicImage):
 
     cimage = os.path.join(mylar.CONFIG.CACHE_DIR, str(comicid) + '.jpg')
     imageurl = mylar.cv.getComic(comicid, 'image', issueid=latestissueid)
+    if imageurl is None:
+        return
     covercheck = helpers.getImage(comicid, imageurl['image'])
     if covercheck['status'] == 'retry':
         logger.fdebug('Attempting to retrieve a different comic image for this particular issue.')
@@ -1671,3 +1819,24 @@ def image_it(comicid, latestissueid, comlocation, ComicImage):
 
     myDB = db.DBConnection()
     myDB.upsert('comics', {'ComicImage': ComicImage}, {'ComicID': comicid})
+
+def importer_thread(serieslist):
+    # importer thread to queue up series to be added to the watchlist
+    # serieslist = [{'comicid': '2828991', 'series': 'Some Comic'}]
+
+    if type(serieslist) != list:
+        serieslist  = [(serieslist)]
+
+    try:
+        if mylar.MASS_ADD.is_alive():
+            mylar.ADD_LIST += serieslist
+            logger.info('[MASS-ADD] MASS_ADD thread already running. Adding an additional %s items to existing queue' % len(serieslist))
+            return
+    except Exception:
+        pass
+
+    logger.info('[MASS-ADD] MASS_ADD thread not started. Started & submitting.')
+    mylar.ADD_LIST += serieslist
+    mylar.MASS_ADD = threading.Thread(target=addvialist, name="mass-add")
+    mylar.MASS_ADD.start()
+

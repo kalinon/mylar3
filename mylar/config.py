@@ -5,6 +5,7 @@ from operator import itemgetter
 import os
 import errno
 import glob
+import json
 import codecs
 import shutil
 import threading
@@ -68,6 +69,8 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'AUTOWANT_UPCOMING': (bool, 'General', True),
     'AUTOWANT_ALL': (bool, 'General', False),
     'COMIC_COVER_LOCAL': (bool, 'General', False),
+    'SERIES_METADATA_LOCAL': (bool, 'General', False),
+    'COVER_FOLDER_LOCAL': (bool, 'General', False),
     'ADD_TO_CSV': (bool, 'General', True),
     'SKIPPED2WANTED': (bool, 'General', False),
     'READ2FILENAME': (bool, 'General', False),
@@ -100,6 +103,8 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'BIGGIE_PUB': (int, 'Weekly', 55),
     'PACK_0DAY_WATCHLIST_ONLY': (bool, 'Weekly', True),
     'RESET_PULLIST_PAGINATION': (bool, 'Weekly', True),
+    'MASS_PUBLISHERS': (str, 'Weekly', []),
+    'AUTO_MASS_ADD': (bool, 'Weekly', False),
 
     'HTTP_PORT' : (int, 'Interface', 8090),
     'HTTP_HOST' : (str, 'Interface', '0.0.0.0'),
@@ -134,6 +139,7 @@ _CONFIG_DEFINITIONS = OrderedDict({
 
     'GIT_PATH' : (str, 'Git', None),
     'GIT_USER' : (str, 'Git', 'mylar3'),
+    'GIT_TOKEN' : (str, 'Git', None),
     'GIT_BRANCH' : (str, 'Git', None),
     'CHECK_GITHUB' : (bool, 'Git', False),
     'CHECK_GITHUB_ON_STARTUP' : (bool, 'Git', False),
@@ -284,6 +290,7 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'COPY2ARCDIR': (bool, 'StoryArc', False),
     'ARC_FOLDERFORMAT': (str, 'StoryArc', '$arc ($spanyears)'),
     'ARC_FILEOPS': (str, 'StoryArc', 'copy'),
+    'ARC_FILEOPS_SOFTLINK_RELATIVE': (bool, 'StoryArc', False),
     'UPCOMING_STORYARCS': (bool, 'StoryArc', False),
     'SEARCH_STORYARCS': (bool, 'StoryArc', False),
 
@@ -888,6 +895,10 @@ class Config(object):
         #force off public torrents usage as currently broken.
         self.ENABLE_PUBLIC = False
 
+        if self.GIT_TOKEN:
+            self.GIT_TOKEN = (self.GIT_TOKEN, 'x-oauth-basic')
+            logger.info('git_token set to %s' % (self.GIT_TOKEN,))
+
         try:
             if not any([self.SAB_HOST is None, self.SAB_HOST == '', 'http://' in self.SAB_HOST[:7], 'https://' in self.SAB_HOST[:8]]):
                 self.SAB_HOST = 'http://' + self.SAB_HOST
@@ -1036,6 +1047,14 @@ class Config(object):
             self.IGNORE_TOTAL = False
             self.IGNORE_HAVETOTAL = False
             logger.warn('You cannot have both ignore_total and ignore_havetotal enabled in the config.ini at the same time. Set only ONE to true - disabling both until this is resolved.')
+
+        if len(self.MASS_PUBLISHERS) > 0:
+            if type(self.MASS_PUBLISHERS) != list:
+                try:
+                    self.MASS_PUBLISHERS = json.loads(self.MASS_PUBLISHERS)
+                except Exception as e:
+                    logger.warn('[MASS_PUBLISHERS] Unable to convert publishers [%s]. Error returned: %s' % (self.MASS_PUBLISHERS, e))
+        logger.info('[MASS_PUBLISHERS] Auto-add for weekly publishers set to: %s' % (self.MASS_PUBLISHERS,))
 
         #comictagger - force to use included version if option is enabled.
         import comictaggerlib.ctversion as ctversion

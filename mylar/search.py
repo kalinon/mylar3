@@ -1267,6 +1267,10 @@ def NZB_SEARCH(
                 bb = findcomicfeed.Startit(
                     findcomic, isssearch, comyear, ComicVersion, IssDateFix, booktype
                 )
+                if bb == 'disable':
+                    helpers.disable_provider('experimental', 'unresponsive / down')
+                    foundc['status'] = False
+                    done = True
                 # since the regexs in findcomicfeed do the 3 loops,
                 # lets force the exit after
                 cmloopit == 1
@@ -2750,11 +2754,11 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                     ):
                         issues_3 = myDB.select(
                             'SELECT * from annuals WHERE Status="Wanted" OR'
-                            ' Status="Failed"'
+                            ' Status="Failed AND NOT Deleted"'
                         )
                     else:
                         issues_3 = myDB.select(
-                            'SELECT * from annuals WHERE Status="Wanted"'
+                            'SELECT * from annuals WHERE Status="Wanted AND NOT Deleted"'
                         )
                     for iss in issues_3:
                         results.append(
@@ -3023,7 +3027,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                 oneoff = False
                 if result is None:
                     result = myDB.selectone(
-                        'SELECT * FROM annuals where IssueID=?', [issueid]
+                        'SELECT * FROM annuals where IssueID=? AND NOT Deleted', [issueid]
                     ).fetchone()
                     mode = 'want_ann'
                     if result is None:
@@ -3253,7 +3257,7 @@ def searchIssueIDList(issuelist):
             ).fetchone()
             if issue is None:
                 issue = myDB.selectone(
-                    'SELECT * from annuals WHERE IssueID=?', [issueid]
+                    'SELECT * from annuals WHERE IssueID=? AND NOT Deleted', [issueid]
                 ).fetchone()
                 if issue is None:
                     logger.warn(
@@ -3401,17 +3405,22 @@ def nzbname_create(provider, title=None, info=None):
             # pretty this biatch up.
             BComicName = re.sub(r'[\:\,\/\?\']', '', str(ComicName))
             Bl_ComicName = re.sub(r'[\&]', 'and', str(BComicName))
-            if '\xbd' in IssueNumber:
-                str_IssueNumber = '0.5'
-            elif '\xbc' in IssueNumber:
-                str_IssueNumber = '0.25'
-            elif '\xbe' in IssueNumber:
-                str_IssueNumber = '0.75'
-            elif '\u221e' in IssueNumber:
-                str_IssueNumber = 'infinity'
+            if IssueNumber is not None:
+                if '\xbd' in IssueNumber:
+                    str_IssueNumber = '0.5'
+                elif '\xbc' in IssueNumber:
+                    str_IssueNumber = '0.25'
+                elif '\xbe' in IssueNumber:
+                    str_IssueNumber = '0.75'
+                elif '\u221e' in IssueNumber:
+                    str_IssueNumber = 'infinity'
+                else:
+                    str_IssueNumber = IssueNumber
+                nzbline = '%s.%s.(%s)'
             else:
-                str_IssueNumber = IssueNumber
-            nzbname = '%s.%s.(%s)' % (
+                str_IssueNumber = ''
+                nzbline = '%s%s(%s)'
+            nzbname = nzbline % (
                 re.sub(" ", ".", str(Bl_ComicName)),
                 str_IssueNumber,
                 comyear,

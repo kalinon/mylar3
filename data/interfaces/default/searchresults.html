@@ -11,11 +11,11 @@
 <%def name="body()">
 	<div id="paddingheader">
                 <%
-                      if type == 'story_arc':
-                          typesel = " Story Arc"
+                      if search_type == 'story_arc':
+                          typesel = " Story Arc search"
                       else:
-                          typesel = ""
-                      searchtext = "Search results for : </br><center>" + name + "</center>"
+                          typesel = " search"
+                      searchtext = typesel + " results for : </br><center>" + name + "</center>"
                  %>
 
 		<h1 class="clearfix"><img src="${icons['icon_search']}" alt="Search results"/>${searchtext}</h1>
@@ -54,7 +54,7 @@
                                             haveit = result['haveit']['comicid']
 					grade = 'Z'
                                         rtype = None
-                                        if type != 'story_arc':
+                                        if search_type != 'story_arc':
                                             if result['type'] == 'Digital':
                                                 rtype = '[Digital]'
                                                 grade = 'Z'
@@ -65,7 +65,7 @@
                                                 rtype = '[HC]'
                                                 grade = 'Z'
                                             else:
-                                                grade = 'A'
+                                                grade = 'B'
 
                                         if haveit != "No":
                                             grade = 'H';
@@ -90,13 +90,17 @@
 					<td class="issues">${result['issues']}</td>
 
 					%if result['haveit'] == "No":
-                                            %if type == 'story_arc':
+                                            %if search_type == 'story_arc':
 						<td class="add" nowrap="nowrap"><a href="addStoryArc?arcid=${result['comicid']}&cvarcid=${result['cvarcid']}&storyarcname=${result['name'] |u}&storyarcyear=${result['comicyear']}&storyarcpublisher=${result['publisher'] |u}&storyarcissues=${result['issues']}&arclist=${result['arclist']}&desc=${result['description']}&image=${result['comicimage']}"><span class="ui-icon ui-icon-plus"></span> Add this Story Arc</a></td>
                                             %else:
 						<td class="add" nowrap="nowrap"><a href="addComic?comicid=${result['comicid']}&comicname=${result['name'] |u}&comicyear=${result['comicyear']}&comicpublisher=${result['publisher'] |u}&comicimage=${result['comicimage']}&comicissues=${result['issues']}&imported=${imported}&ogcname=${ogcname}&serinfo=${serinfo}"><span class="ui-icon ui-icon-plus"></span> Add this Comic</a></td>
                                             %endif
 					%else:
+                                            %if search_type == 'story_arc':
+						<td class="add" nowrap="nowrap"><a href="detailStoryArc?StoryArcID=${haveit}&StoryArcName=${result['name']}"><span class="ui-icon ui-icon-arrowreturnthick-1-n"></span> Already in library</a></td>
+                                            %else:
 						<td class="add" nowrap="nowrap"><a href="comicDetails?ComicID=${haveit}"><span class="ui-icon ui-icon-arrowreturnthick-1-n"></span> Already in library</a></td>
+                                            %endif
 					%endif
 				</tr>
 				%endfor

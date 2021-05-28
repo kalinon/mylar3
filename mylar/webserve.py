@@ -60,6 +60,9 @@ def serve_template(templatename, **kwargs):
                  'icon_upcoming': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'icon_upcoming.png'),
                  'icon_wanted': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'icon_wanted.png'),
                  'icon_search': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'icon_search.png'),
+                 'discord-icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'discord-icon.png'),
+                 'github-icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'github-icon.png'),
+                 'forum-icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'forum-icon.png'),
                  'listview_icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'listview_icon.png'),
                  'delete_icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'delete_icon.png'),
                  'deleteall_icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'images', 'deleteall_icon.png'),
@@ -72,6 +75,9 @@ def serve_template(templatename, **kwargs):
                  'icon_upcoming': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'icon_upcoming.png'),
                  'icon_wanted': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'icon_wanted.png'),
                  'icon_search': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'icon_search.png'),
+                 'discord-icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'discord-icon-carbon.png'),
+                 'github-icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'github-icon-carbon.png'),
+                 'forum-icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'forum-icon-carbon.png'),
                  'listview_icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'listview_icon.png'),
                  'delete_icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'delete_icon.png'),
                  'deleteall_icon': os.path.join(mylar.CONFIG.HTTP_ROOT, 'interfaces', 'carbon', 'images', 'deleteall_icon.png'),
@@ -124,18 +130,20 @@ class WebInterface(object):
         else:
             for row in resultlist:
                 try:
-                    if any([sSearch.lower() in row['ComicPublisher'].lower(), sSearch.lower() in row['ComicName'].lower(), sSearch.lower() in row['ComicYear'], sSearch.lower() in row['LatestIssue'].lower(), sSearch.lower() in row['recentstatus'].lower()]):
+                    lat_iss = row['LatestIssue']
+                    if lat_iss is None:
+                        lat_iss = ''
+                    if any([sSearch.lower() in row['ComicPublisher'].lower(), sSearch.lower() in row['ComicName'].lower(), sSearch.lower() in row['ComicYear'], sSearch.lower() in lat_iss, sSearch.lower() in row['recentstatus'].lower()]):
                         filtered.append(row)
                     elif row['displaytype'] is not None and sSearch.lower() in row['displaytype'].lower():
                         filtered.append(row)
                 except Exception as e:
-                    filtered = [row for row in resultlist if any([sSearch.lower() in row['ComicName'].lower(), sSearch.lower() in row['ComicYear'], sSearch.lower() in row['recentstatus']]) or (row['LatestIssue'] is not None and sSearch.lower() in row['LatestIssue'].lower())]
+                    pass
 
-            #filtered = [row for row in resultlist if any([sSearch.lower() in row['ComicPublisher'].lower(), sSearch.lower() in row['ComicName'].lower(), sSearch.lower() in row['ComicYear'], False if row['displaytype'] is None else (True if sSearch.lower() in row['displaytype'] else False), sSearch.lower() in row['LatestIssue'], sSearch.lower() in row['recentstatus']])]
         sortcolumn = 'ComicPublisher'
         if iSortCol_0 == '0':
             sortcolumn = 'ComicPublisher'
-        if iSortCol_0 == '1':
+        elif iSortCol_0 == '1':
             sortcolumn = 'ComicName'
         elif iSortCol_0 == '2':
             sortcolumn = 'ComicYear'
@@ -152,7 +160,9 @@ class WebInterface(object):
         #filtered.sort(key= itemgetter(sortcolumn2, sortcolumn), reverse=sSortDir_0 == "desc")
         if sortcolumn == 'percent':
             filtered.sort(key=lambda x: (x['totalissues'] is None, x['totalissues'] == '', x['totalissues']), reverse=sSortDir_0 == "asc")
+            filtered.sort(key=lambda x: (x['percent'] is None, x['percent'] == '', x['percent']), reverse=sSortDir_0 == "desc")
             filtered.sort(key=lambda x: (x['haveissues'] is None, x['haveissues'] == '', x['haveissues']), reverse=sSortDir_0 == "desc")
+            filtered.sort(key=lambda x: (x['percent'] is None, x['percent'] == '', x['percent']), reverse=sSortDir_0 == "desc")
         else:
             filtered.sort(key=lambda x: (x[sortcolumn] is None, x[sortcolumn] == '', x[sortcolumn]), reverse=sSortDir_0 == "desc")
         rows = filtered[iDisplayStart:(iDisplayStart + iDisplayLength)]
@@ -169,6 +179,45 @@ class WebInterface(object):
         comic = myDB.selectone('SELECT * FROM comics WHERE ComicID=?', [ComicID]).fetchone()
         if comic is None:
             raise cherrypy.HTTPRedirect("home")
+
+        if ComicID is not None:
+            comic_ext = ('.cbr','.cbz','.cb7')
+            filesupdated = 0
+            if comic['FilesUpdated']:
+                filesupdated = time.mktime(datetime.datetime.strptime(comic['FilesUpdated'], '%Y-%m-%d %H:%M:%S').timetuple())
+
+            run_them_down = False
+            if comic['ComicLocation']:
+                for dirname, subs, files in os.walk(comic['ComicLocation']):
+                    if run_them_down is True:
+                        break
+
+                    if dirname == dir:
+                        direc = None
+                    else:
+                        direc = dirname
+
+                    for fname in files:
+                        filename = fname
+                        if os.path.splitext(filename)[1].lower().endswith(comic_ext):
+                            if direc is None:
+                                try:
+                                    ctime = os.path.getmtime(dirname)
+                                except Exception as e:
+                                    continue
+                            else:
+                                try:
+                                    ctime = os.path.getmtime(dirname)
+                                except Exception as e:
+                                    continue
+
+                            if ctime > filesupdated:
+                               run_them_down = True
+                               break
+
+            if run_them_down is True:
+                updater.forceRescan(ComicID)
+                comic = myDB.selectone('SELECT * FROM comics WHERE ComicID=?', [ComicID]).fetchone()
 
         totalissues = comic['Total']
         haveissues = comic['Have']
@@ -271,6 +320,26 @@ class WebInterface(object):
             comicImage = comic['ComicImage']
         comicpublisher = helpers.publisherImages(comic['ComicPublisher'])
 
+        description_load = None
+        if comic['ComicLocation'] is not None:
+            if os.path.exists(os.path.join(comic['ComicLocation'], 'series.json')):
+                try:
+                    with open(os.path.join(comic['ComicLocation'], 'series.json')) as j_file:
+                        metainfo = json.load(j_file)
+                    description_load = metainfo['metadata'][0]['description']
+                except Exception as e:
+                    try:
+                        description_load = metainfo['metadata'][0]['description_formatted']
+                    except Exception as e:
+                        logger.info('No description found within series.json. Reloading from dB if available.[error: %s]' % e)
+
+        if description_load is not None:
+            description = description_load
+        elif comic['DescriptionEdit'] is not None:
+            description = comic['DescriptionEdit']
+        else:
+            description = comic['Description']
+
         if comic['Collects'] is not None:
             issues_list = json.loads(comic['Collects'])
         else:
@@ -314,12 +383,13 @@ class WebInterface(object):
                     "publisher_image_alt":            comicpublisher['publisher_image_alt'],
                     "publisher_imageH":               comicpublisher['publisher_imageH'],
                     "publisher_imageW":               comicpublisher['publisher_imageW'],
+                    "description":                    description,
                     "issue_list":                     issues_list,
                     "ComicImage":                     comicImage + '?' + datetime.datetime.now().strftime('%y-%m-%d %H:%M:%S')
                }
 
         if mylar.CONFIG.ANNUALS_ON:
-            annuals = myDB.select("SELECT * FROM annuals WHERE ComicID=? ORDER BY ComicID, Int_IssueNumber DESC", [ComicID])
+            annuals = myDB.select("SELECT * FROM annuals WHERE ComicID=? AND NOT Deleted ORDER BY ComicID, Int_IssueNumber DESC", [ComicID])
             #we need to load in the annual['ReleaseComicName'] and annual['ReleaseComicID']
             #then group by ReleaseComicID, in an attempt to create seperate tables for each different annual series.
             #this should allow for annuals, specials, one-shots, etc all to be included if desired.
@@ -363,9 +433,9 @@ class WebInterface(object):
         return serve_template(templatename="comicdetails.html", title=comic['ComicName'], comic=comic, issues=issues, comicConfig=comicConfig, isCounts=isCounts, series=series, annuals=annuals_list, annualinfo=aName)
     comicDetails.exposed = True
 
-    def searchit(self, name, issue=None, mode=None, type=None, serinfo=None):
-        if type is None: type = 'comic'  # let's default this to comic search only for the time being (will add story arc, characters, etc later)
-        else: logger.fdebug(str(type) + " mode enabled.")
+    def searchit(self, name, issue=None, mode=None, search_type=None, serinfo=None):
+        if search_type is None: search_type = 'comic'  # let's default this to comic search only for the time being (will add story arc, characters, etc later)
+        else: logger.fdebug(str(search_type) + " mode enabled.")
         #mode dictates type of search:
         # --series     ...  search for comicname displaying all results
         # --pullseries ...  search for comicname displaying a limited # of results based on issue
@@ -373,7 +443,7 @@ class WebInterface(object):
         if mode is None: mode = 'series'
         if len(name) == 0:
             raise cherrypy.HTTPRedirect("home")
-        if type == 'comic' and mode == 'pullseries':
+        if search_type == 'comic' and mode == 'pullseries':
             if issue == 0:
                 #if it's an issue 0, CV doesn't have any data populated yet - so bump it up one to at least get the current results.
                 issue = 1
@@ -382,7 +452,7 @@ class WebInterface(object):
             except TypeError:
                 logger.error('Unable to perform required pull-list search for : [name: ' + name + '][issue: ' + issue + '][mode: ' + mode + ']')
                 return
-        elif type == 'comic' and mode == 'series':
+        elif search_type == 'comic' and mode == 'series':
             if name.startswith('4050-'):
                 mismatch = "no"
                 comicid = re.sub('4050-', '', name)
@@ -394,15 +464,15 @@ class WebInterface(object):
             except TypeError:
                 logger.error('Unable to perform required search for : [name: ' + name + '][mode: ' + mode + ']')
                 return
-        elif type == 'comic' and mode == 'want':
+        elif search_type == 'comic' and mode == 'want':
             try:
                 searchresults = mb.findComic(name, mode, issue)
             except TypeError:
                 logger.error('Unable to perform required one-off pull-list search for : [name: ' + name + '][issue: ' + issue + '][mode: ' + mode + ']')
                 return
-        elif type == 'story_arc':
+        elif search_type == 'story_arc':
             try:
-                searchresults = mb.findComic(name, mode=None, issue=None, type='story_arc')
+                searchresults = mb.findComic(name, mode=None, issue=None, search_type='story_arc')
             except TypeError:
                 logger.error('Unable to perform required story-arc search for : [arc: ' + name + '][mode: ' + mode + ']')
                 return
@@ -414,7 +484,7 @@ class WebInterface(object):
             if mylar.CONFIG.COMICVINE_API is None:
                 logger.error('You NEED to set a ComicVine API key prior to adding anything. It\'s Free - Go get one!')
                 return
-        return serve_template(templatename="searchresults.html", title='Search Results for: "' + name + '"', searchresults=searchresults, type=type, imported=None, ogcname=None, name=name, serinfo=serinfo)
+        return serve_template(templatename="searchresults.html", title='Search Results for: "' + name + '"', searchresults=searchresults, search_type=search_type, imported=None, ogcname=None, name=name, serinfo=serinfo)
     searchit.exposed = True
 
     def addComic(self, comicid, comicname=None, comicyear=None, comicimage=None, comicissues=None, comicpublisher=None, imported=None, ogcname=None, serinfo=None):
@@ -917,6 +987,12 @@ class WebInterface(object):
             else:
                 logger.info('ComicRN.py version: ' + str(comicrn_version) + ' -- autoProcessComics.py version: ' + str(apc_version))
 
+        else:
+             if not os.path.exists(nzb_folder):
+                 yield json.dumps({'status': 'fail', 'message': '%s does not exist - please verify!' % (nzb_folder)})
+             else:
+                 yield json.dumps({'status': 'success', 'message': 'Successfully submitted %s for manual post-processing...' % (nzb_folder)})
+
         import queue
         logger.info('Starting postprocessing for : ' + nzb_name)
         if failed == '0':
@@ -926,12 +1002,10 @@ class WebInterface(object):
 
         queue = queue.Queue()
         retry_outside = False
-
         if not failed:
             PostProcess = PostProcessor.PostProcessor(nzb_name, nzb_folder, queue=queue)
             if nzb_name == 'Manual Run' or nzb_name == 'Manual+Run':
                 threading.Thread(target=PostProcess.Process).start()
-                #raise cherrypy.HTTPRedirect("home")
             else:
                 thread_ = threading.Thread(target=PostProcess.Process, name="Post-Processing")
                 thread_.start()
@@ -1079,6 +1153,29 @@ class WebInterface(object):
         updater.dbUpdate(comicsToAdd, 'refresh')
     refreshSeries.exposed = True
 
+    def description_edit(self, id, value):
+        comicid = id[1:]
+        myDB = db.DBConnection()
+        serieschk = myDB.selectone('SELECT * from comics WHERE ComicID=?', [comicid]).fetchone()
+        if serieschk is None:
+            logger.error('Cannot edit this for some reason - something is wrong.')
+            return
+        cv_description = serieschk['Description']
+        if any([cv_description == value, serieschk['DescriptionEdit'] == value]) and len(value) > 0:
+            # only update it if it's different than the original value.
+            return value
+        if len(value) == 0:
+            logger.info('Edit set to None. Refresh the series to get the original description')
+            value = None
+        comicname = serieschk['ComicName']
+        newVal = {"DescriptionEdit": value}
+        ctrlVal = {"ComicID": comicid}
+        myDB.upsert("comics", newVal, ctrlVal)
+        logger.info('Updated Description for %s [%s]' % (comicname, comicid))
+        return value
+
+    description_edit.exposed = True
+
     def issue_edit(self, id, value):
         logger.fdebug('id: ' + str(id))
         logger.fdebug('value: ' + str(value))
@@ -1097,16 +1194,19 @@ class WebInterface(object):
         issuenumber = issuechk['Issue_Number']
 
         #check if the new date is in the correct format of yyyy-mm-dd
-        try:
-            valid_date = time.strptime(value, '%Y-%m-%d')
-        except ValueError:
-            logger.error('invalid date provided. Rejecting edit.')
-            return oldissuedate
-
-        #if the new issue year is less than the series year - reject it.
-        if value[:4] < seriesyear:
-            logger.error('Series year of ' + str(seriesyear) + ' is less than new issue date of ' + str(value[:4]))
-            return oldissuedate
+        if value == '0000-00-00':
+            logger.fdebug('Reverting issue date to 0000-00-00 to allow for possible CV update.')
+        else:
+            try:
+                valid_date = time.strptime(value, '%Y-%m-%d')
+            except ValueError:
+                logger.error('invalid date provided. Rejecting edit.')
+                return oldissuedate
+            else:
+                #if the new issue year is less than the series year - reject it.
+                if value[:4] < seriesyear:
+                    logger.error('Series year of ' + str(seriesyear) + ' is less than new issue date of ' + str(value[:4]))
+                    return oldissuedate
 
         newVal = {"IssueDate": value,
                   "IssueDate_Edit": oldissuedate}
@@ -1144,7 +1244,7 @@ class WebInterface(object):
                 annchk = 'no'
                 if mi is None:
                     if mylar.CONFIG.ANNUALS_ON:
-                        mi = myDB.selectone("SELECT * FROM annuals WHERE IssueID=?", [IssueID]).fetchone()
+                        mi = myDB.selectone("SELECT * FROM annuals WHERE IssueID=? AND NOT Deleted", [IssueID]).fetchone()
                         comicname = mi['ReleaseComicName']
                         annchk = 'yes'
                 else:
@@ -1344,7 +1444,7 @@ class WebInterface(object):
                 break
             else:
                 oneoff = False
-                chkthis = myDB.selectone('SELECT a.ComicID, a.ComicName, a.ComicVersion, a.ComicYear, b.IssueID, b.Issue_Number, b.IssueDate FROM comics as a INNER JOIN annuals as b ON a.ComicID = b.ComicID WHERE IssueID=?', [IssueID]).fetchone()
+                chkthis = myDB.selectone('SELECT a.ComicID, a.ComicName, a.ComicVersion, a.ComicYear, b.IssueID, b.Issue_Number, b.IssueDate FROM comics as a INNER JOIN annuals as b ON a.ComicID = b.ComicID WHERE IssueID=? AND NOT b.Deleted', [IssueID]).fetchone()
                 if chkthis is None:
                     chkthis = myDB.selectone('SELECT a.ComicID, a.ComicName, a.ComicVersion, a.ComicYear, b.IssueID, b.Issue_Number, b.IssueDate FROM comics as a INNER JOIN issues as b ON a.ComicID = b.ComicID WHERE IssueID=?', [IssueID]).fetchone()
                     if chkthis is None:
@@ -1537,7 +1637,7 @@ class WebInterface(object):
                     logger.info('Marking %s issue: %s as wanted...' % (ComicName, ComicIssue))
                     myDB.upsert("issues", newStatus, controlValueDict)
             else:
-                annual_name = myDB.selectone("SELECT * FROM annuals WHERE ComicID=? and IssueID=?", [ComicID, IssueID]).fetchone()
+                annual_name = myDB.selectone("SELECT * FROM annuals WHERE ComicID=? and IssueID=? AND NOT Deleted", [ComicID, IssueID]).fetchone()
                 if annual_name is None:
                     logger.fdebug('Unable to locate.')
                 else:
@@ -1560,7 +1660,7 @@ class WebInterface(object):
             if mode == 'want':
                 issues = myDB.selectone("SELECT IssueDate, ReleaseDate FROM issues WHERE IssueID=?", [IssueID]).fetchone()
             elif mode == 'want_ann':
-                issues = myDB.selectone("SELECT IssueDate, ReleaseDate FROM annuals WHERE IssueID=?", [IssueID]).fetchone()
+                issues = myDB.selectone("SELECT IssueDate, ReleaseDate FROM annuals WHERE IssueID=? AND NOT Deleted", [IssueID]).fetchone()
             if ComicYear == None:
                 ComicYear = str(issues['IssueDate'])[:4]
             if issues['ReleaseDate'] is None or issues['ReleaseDate'] == '0000-00-00':
@@ -1600,9 +1700,9 @@ class WebInterface(object):
             if issue is None:
                 if mylar.CONFIG.ANNUALS_ON:
                     if ReleaseComicID is None:
-                        issann = myDB.selectone('SELECT * FROM annuals WHERE IssueID=?', [IssueID]).fetchone()
+                        issann = myDB.selectone('SELECT * FROM annuals WHERE IssueID=? AND NOT Deleted', [IssueID]).fetchone()
                     else:
-                        issann = myDB.selectone('SELECT * FROM annuals WHERE IssueID=? AND ReleaseComicID=?', [IssueID, ReleaseComicID]).fetchone()
+                        issann = myDB.selectone('SELECT * FROM annuals WHERE IssueID=? AND ReleaseComicID=? AND NOT Deleted', [IssueID, ReleaseComicID]).fetchone()
                     ComicName = issann['ReleaseComicName']
                     IssueNumber = issann['Issue_Number']
                     annchk = 'yes'
@@ -1682,7 +1782,7 @@ class WebInterface(object):
         annchk = 'no'
         if issue is None:
             if mylar.CONFIG.ANNUALS_ON:
-                issann = myDB.selectone('SELECT * FROM annuals WHERE IssueID=?', [IssueID]).fetchone()
+                issann = myDB.selectone('SELECT * FROM annuals WHERE IssueID=? AND NOT Deleted', [IssueID]).fetchone()
                 comicname = issann['ReleaseComicName']
                 issue = issann['Issue_Number']
                 annchk = 'yes'
@@ -1720,7 +1820,21 @@ class WebInterface(object):
             return
     pullSearch.exposed = True
 
-    def pullist(self, week=None, year=None, generateonly=False, current=None):
+    def pullist(self, **args): #week=None, year=None, generateonly=False, current=None):
+        week = None
+        year = None
+        generateonly = False
+        current = None
+        for k,v in list(args.items()):
+            if k == 'week':
+                week = v
+            elif k == 'year':
+                year = v
+            elif k == 'generateonly':
+                generateonly = v
+            elif k == 'current':
+                current = v
+
         myDB = db.DBConnection()
         autowant = []
         if generateonly is False:
@@ -1766,7 +1880,7 @@ class WebInterface(object):
             for weekly in w_results:
                 xfound = False
                 tmp_status = weekly['Status']
-                if weekly['ComicID'] in watchlibrary:
+                if weekly['ComicID'] in watchlibrary and tmp_status != 'Mismatched':
                     haveit = watchlibrary[weekly['ComicID']]['comicid']
 
                     if weekinfo['weeknumber']:
@@ -1793,8 +1907,13 @@ class WebInterface(object):
                 if all([weekly['ComicID'] is not None, weekly['ComicID'] != '', haveit == 'No']) or haveit == 'OneOff':
                     linkit = 'http://comicvine.gamespot.com/volume/4050-' + str(weekly['ComicID'])
                 else:
+                    if all([weekly['Status'] == 'Mismatched', haveit == 'No', weekly['IssueID'] is not None]):
+                        linkit = 'http://comicvine.gamespot.com/volume/4000-' + str(weekly['IssueID'])
+                    elif all([weekly['Status'] == 'Mismatched', haveit == 'Yes', weekly['ComicID'] is not None]):
+                        linkit = 'http://comicvine.gamespot.com/volume/4050-' + str(weekly['ComicID'])
+                    else:
                     #setting it here will force it to set the link to the right comicid regardless of annuals or not
-                    linkit = haveit
+                        linkit = haveit
 
                 x = None
                 try:
@@ -1890,9 +2009,9 @@ class WebInterface(object):
                         weeklyresults = endresults
 
             if week:
-                return serve_template(templatename="weeklypull.html", title="Weekly Pull", weeklyresults=weeklyresults, pullfilter=True, weekfold=weekinfo['week_folder'], wantedcount=wantedcount, weekinfo=weekinfo)
+                return serve_template(templatename="weeklypull.html", title="Weekly Pull", weeklyresults=weeklyresults, pullfilter=True, weekfold=weekinfo['week_folder'], wantedcount=wantedcount, weekinfo=weekinfo, auto_mass_add=helpers.checked(mylar.CONFIG.AUTO_MASS_ADD))
             else:
-                return serve_template(templatename="weeklypull.html", title="Weekly Pull", weeklyresults=weeklyresults, pullfilter=True, weekfold=weekinfo['week_folder'], wantedcount=wantedcount, weekinfo=weekinfo)
+                return serve_template(templatename="weeklypull.html", title="Weekly Pull", weeklyresults=weeklyresults, pullfilter=True, weekfold=weekinfo['week_folder'], wantedcount=wantedcount, weekinfo=weekinfo, auto_mass_add=helpers.checked(mylar.CONFIG.AUTO_MASS_ADD))
     pullist.exposed = True
 
     def removeautowant(self, comicname, release):
@@ -2194,11 +2313,11 @@ class WebInterface(object):
         if mylar.CONFIG.ANNUALS_ON:
             #let's add the annuals to the wanted table so people can see them
             #ComicName wasn't present in db initially - added on startup chk now.
-            annuals_list = myDB.select("SELECT * FROM annuals WHERE Status='Wanted'")
+            annuals_list = myDB.select("SELECT * FROM annuals WHERE Status='Wanted' AND NOT Deleted")
             if mylar.CONFIG.UPCOMING_SNATCHED:
-                annuals_list += myDB.select("SELECT * FROM annuals WHERE Status='Snatched'")
+                annuals_list += myDB.select("SELECT * FROM annuals WHERE Status='Snatched' AND NOT Deleted")
             if mylar.CONFIG.FAILED_DOWNLOAD_HANDLING:
-                annuals_list += myDB.select("SELECT * FROM annuals WHERE Status='Failed'")
+                annuals_list += myDB.select("SELECT * FROM annuals WHERE Status='Failed' AND NOT Deleted")
 #           anncnt = myDB.select("SELECT COUNT(*) FROM annuals WHERE Status='Wanted' OR Status='Snatched'")
 #           ann_cnt = anncnt[0][0]
             ann_list += annuals_list
@@ -2286,10 +2405,10 @@ class WebInterface(object):
     def annualDelete(self, comicid, ReleaseComicID=None):
         myDB = db.DBConnection()
         if ReleaseComicID is None:
-            myDB.action("DELETE FROM annuals WHERE ComicID=?", [comicid])
+            myDB.action("UPDATE annuals set Deleted=1 WHERE ComicID=?", [comicid])
             logger.fdebug("Deleted all annuals from DB for ComicID of " + str(comicid))
         else:
-            myDB.action("DELETE FROM annuals WHERE ReleaseComicID=?", [ReleaseComicID])
+            myDB.action("UPDATE annuals set Deleted=1 WHERE ReleaseComicID=?", [ReleaseComicID])
             logger.fdebug("Deleted selected annual from DB with a ComicID of " + str(ReleaseComicID))
         raise cherrypy.HTTPRedirect("comicDetails?ComicID=%s" % [comicid])
 
@@ -2597,7 +2716,7 @@ class WebInterface(object):
             extensions = ('.cbr', '.cbz', '.cb7')
             issues = myDB.select("SELECT * FROM issues WHERE ComicID=?", [cid])
             if mylar.CONFIG.ANNUALS_ON:
-                issues += myDB.select("SELECT * FROM annuals WHERE ComicID=?", [cid])
+                issues += myDB.select("SELECT * FROM annuals WHERE ComicID=? AND NOT Deleted", [cid])
             try:
                 if mylar.CONFIG.MULTIPLE_DEST_DIRS is not None and mylar.CONFIG.MULTIPLE_DEST_DIRS != 'None' and os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comicdir)) != comicdir:
                     logger.fdebug('multiple_dest_dirs:' + mylar.CONFIG.MULTIPLE_DEST_DIRS)
@@ -2775,7 +2894,7 @@ class WebInterface(object):
         myDB = db.DBConnection()
         if mylar.CONFIG.ANNUALS_ON:
             issues = myDB.select("SELECT * from issues WHERE Status=? AND ComicName NOT LIKE '%Annual%'", [status])
-            annuals = myDB.select("SELECT * from annuals WHERE Status=?", [status])
+            annuals = myDB.select("SELECT * from annuals WHERE Status=? AND NOT Deleted", [status])
         else:
             issues = myDB.select("SELECT * from issues WHERE Status=?", [status])
             annuals = []
@@ -4227,15 +4346,15 @@ class WebInterface(object):
         })
     getConfig.exposed = True
 
-    def clearhistory(self, type=None):
+    def clearhistory(self, status_type=None):
         myDB = db.DBConnection()
-        if type == 'all':
+        if status_type == 'all':
             logger.info("Clearing all history")
             myDB.action('DELETE from snatched')
         else:
-            logger.info("Clearing history where status is %s" % type)
-            myDB.action('DELETE from snatched WHERE Status=?', [type])
-            if type == 'Processed':
+            logger.info("Clearing history where status is %s" % status_type)
+            myDB.action('DELETE from snatched WHERE Status=?', [status_type])
+            if status_type == 'Processed':
                 myDB.action("DELETE from snatched WHERE Status='Post-Processed'")
         raise cherrypy.HTTPRedirect("history")
     clearhistory.exposed = True
@@ -4725,8 +4844,6 @@ class WebInterface(object):
                     if sresults is False:
                         sresults = []
 
-                type='comic'
-
                 #we now need to cycle through the results until we get a hit on both dynamicname AND year (~count of issues possibly).
                 logger.fdebug('[IMPORT] [%s] search results' % len(sresults))
                 search_matches = []
@@ -4956,8 +5073,8 @@ class WebInterface(object):
             results = myDB.select("SELECT * FROM importresults WHERE (WatchMatch is Null OR WatchMatch LIKE 'C%') AND DynamicName=? AND Volume=?",[DynamicName,volume])
         files = []
         for result in results:
-            files.append({'comicfilename': result['ComicFilename'],
-                          'comiclocation': result['ComicLocation'],
+            files.append({'comicfilename': urllib.parse.quote(result['ComicFilename']),
+                          'comiclocation': urllib.parse.quote(result['ComicLocation']),
                           'issuenumber':   result['IssueNumber'],
                           'import_id':     result['impID']})
 
@@ -5220,6 +5337,8 @@ class WebInterface(object):
                     "autowant_all": helpers.checked(mylar.CONFIG.AUTOWANT_ALL),
                     "autowant_upcoming": helpers.checked(mylar.CONFIG.AUTOWANT_UPCOMING),
                     "comic_cover_local": helpers.checked(mylar.CONFIG.COMIC_COVER_LOCAL),
+                    "cover_folder_local": helpers.checked(mylar.CONFIG.COVER_FOLDER_LOCAL),
+                    "series_metadata_local": helpers.checked(mylar.CONFIG.SERIES_METADATA_LOCAL),
                     "alternate_latest_series_covers": helpers.checked(mylar.CONFIG.ALTERNATE_LATEST_SERIES_COVERS),
                     "pref_qual_0": helpers.radio(int(mylar.CONFIG.PREFERRED_QUALITY), 0),
                     "pref_qual_1": helpers.radio(int(mylar.CONFIG.PREFERRED_QUALITY), 1),
@@ -5545,7 +5664,7 @@ class WebInterface(object):
 
     readlistOptions.exposed = True
 
-    def arcOptions(self, StoryArcID=None, StoryArcName=None, read2filename=0, storyarcdir=0, arc_folderformat=None, copy2arcdir=0, arc_fileops='copy'):
+    def arcOptions(self, StoryArcID=None, StoryArcName=None, read2filename=0, storyarcdir=0, arc_folderformat=None, copy2arcdir=0, arc_fileops='copy', arc_fileops_softlink_relative=0):
         mylar.CONFIG.READ2FILENAME = bool(int(read2filename))
         mylar.CONFIG.STORYARCDIR = bool(int(storyarcdir))
         if arc_folderformat is None:
@@ -5554,11 +5673,13 @@ class WebInterface(object):
             mylar.CONFIG.ARC_FOLDERFORMAT = arc_folderformat
         mylar.CONFIG.COPY2ARCDIR = bool(int(copy2arcdir))
         mylar.CONFIG.ARC_FILEOPS = arc_fileops
-        options = {'read2filename':     mylar.CONFIG.READ2FILENAME,
-                   'storyarcdir':       mylar.CONFIG.STORYARCDIR,
-                   'arc_folderformat':  mylar.CONFIG.ARC_FOLDERFORMAT,
-                   'copy2arcdir':       mylar.CONFIG.COPY2ARCDIR,
-                   'arc_fileops':       mylar.CONFIG.ARC_FILEOPS}
+        mylar.CONFIG.ARC_FILEOPS_SOFTLINK_RELATIVE = bool(int(arc_fileops_softlink_relative))
+        options = {'read2filename':                 mylar.CONFIG.READ2FILENAME,
+                   'storyarcdir':                   mylar.CONFIG.STORYARCDIR,
+                   'arc_folderformat':              mylar.CONFIG.ARC_FOLDERFORMAT,
+                   'copy2arcdir':                   mylar.CONFIG.COPY2ARCDIR,
+                   'arc_fileops':                   mylar.CONFIG.ARC_FILEOPS,
+                   'arc_fileops_softlink_relative': mylar.CONFIG.ARC_FILEOPS_SOFTLINK_RELATIVE}
         mylar.CONFIG.writeconfig(values=options)
 
         #force the check/creation of directory com_location here
@@ -5587,7 +5708,7 @@ class WebInterface(object):
                            'newznab', 'use_minsize', 'use_maxsize', 'ddump', 'failed_download_handling', 'sab_client_post_processing', 'nzbget_client_post_processing',
                            'failed_auto', 'post_processing', 'enable_check_folder', 'enable_pre_scripts', 'enable_snatch_script', 'enable_extra_scripts',
                            'enable_meta', 'cbr2cbz_only', 'ct_tag_cr', 'ct_tag_cbl', 'ct_cbz_overwrite', 'rename_files', 'replace_spaces', 'zero_level',
-                           'lowercase_filenames', 'autowant_upcoming', 'autowant_all', 'comic_cover_local', 'alternate_latest_series_covers', 'cvinfo', 'snatchedtorrent_notify',
+                           'lowercase_filenames', 'autowant_upcoming', 'autowant_all', 'comic_cover_local', 'cover_folder_local', 'series_metadata_local', 'alternate_latest_series_covers', 'cvinfo', 'snatchedtorrent_notify',
                            'prowl_enabled', 'prowl_onsnatch', 'pushover_enabled', 'pushover_onsnatch', 'pushover_image', 'boxcar_enabled',
                            'boxcar_onsnatch', 'pushbullet_enabled', 'pushbullet_onsnatch', 'telegram_enabled', 'telegram_onsnatch', 'telegram_image', 'discord_enabled', 'discord_onsnatch', 'slack_enabled', 'slack_onsnatch',
                            'email_enabled', 'email_enc', 'email_ongrab', 'email_onpost', 'opds_enable', 'opds_authentication', 'opds_metainfo', 'opds_pagesize', 'enable_ddl', 'deluge_pause'] #enable_public
@@ -5941,7 +6062,7 @@ class WebInterface(object):
             myDB = db.DBConnection()
             meta_data = myDB.selectone('SELECT * FROM issues where IssueID=?', [issueid]).fetchone()
             if meta_data is None:
-                meta_data = myDB.selectone('SELECT * FROM annuals where IssueID=?', [issueid]).fetchone()
+                meta_data = myDB.selectone('SELECT * FROM annuals where IssueID=? AND NOT Deleted', [issueid]).fetchone()
             seriestitle = meta_data['ComicName']
             issuenumber = meta_data['Issue_Number']
             try:
@@ -5960,7 +6081,7 @@ class WebInterface(object):
             myDB = db.DBConnection()
             metadata_db = myDB.selectone('SELECT * FROM issues where IssueID=?', [issueid]).fetchone()
             if metadata_db is None:
-                metadata_db = myDB.selectone('SELECT * FROM annuals where IssueID=?', [issueid]).fetchone()
+                metadata_db = myDB.selectone('SELECT * FROM annuals where IssueID=? AND NOT Deleted', [issueid]).fetchone()
             seriestitle = meta_data['series']
             if any([seriestitle == 'None', seriestitle is None]):
                 seriestitle = metadata_db['ComicName']
@@ -6918,4 +7039,254 @@ class WebInterface(object):
         updater.watchlist_updater()
     dbupdater_watchlist.exposed = True
 
+    def dump_that_shizzle(self, **kwargs):
+        # if any([user == 'Offspring', user == 'SCSi']):
+        #     print('now leave me alone.')
+
+        mass_auto = False
+        publishers = []
+
+        for k, v in kwargs.items():
+            if 'publishers' in k:
+                selectize = json.loads(v)
+                try:
+                    publishers = selectize['0']['selectize']['items']
+                except Exception as e:
+                    logger.info('unable to parse selectize: %s' % (selectize,))
+                    continue
+                else:
+                    if type(publishers) == str:
+                        # if it's only one selection, force it to a list.
+                         publishers = [publishers]
+            elif 'weeknumber' in k:
+                weeknumber = v
+            elif 'year' in k:
+                year = v
+            elif 'mass_auto' in k:
+                if v == 'true':
+                    mass_auto = True
+
+
+        mylar.CONFIG.AUTO_MASS_ADD = mass_auto
+
+        if len(publishers) == 0:
+            publishers = None
+
+        #watchlibrary = helpers.listLibrary()
+        #watch = []
+
+        #myDB = db.DBConnection()
+        #pub_listing = []
+        #if publishers is None:
+        #    watchlist = myDB.select('SELECT * FROM weekly WHERE weeknumber=? and year=?', [weeknumber, year])
+        #else:
+        #    cnt = 0
+        #    pblist = 'AND (publisher="%s"' % publishers[cnt]
+        #    for pb in publishers:
+        #        if cnt > 0:
+        #            pblist += ' OR publisher="%s"' % pb
+
+        #        pub_listing.append(pb)
+        #        cnt += 1
+        #    pblist += ')'
+        #    mylar.CONFIG.MASS_PUBLISHERS = json.loads(json.dumps(pub_listing))
+        #    mylar.CONFIG.writeconfig(values={'mass_publishers': json.dumps(mylar.CONFIG.MASS_PUBLISHERS)})
+        #    query_line = 'SELECT * FROM WEEKLY WHERE weeknumber=%s AND year=%s %s' % (weeknumber, year, pblist)
+        #    watchlist = myDB.select(query_line)
+
+        #if watchlist:
+        #    for wt in watchlist:
+        #        if wt['comicid'] not in watchlibrary and wt['comicid'] is not None:
+        #            if not any(ext['comicid'] == wt['comicid'] for ext in mylar.ADD_LIST):
+        #                watch.append({'comicid': wt['comicid'], 'series': wt['comic']})
+
+        pub_info = weeklypull.mass_publishers(publishers, weeknumber, year)
+
+        pub_count = pub_info['publisher_count']
+        if pub_count == 0:
+            pub_count = 'all'
+        return json.dumps({"status": "success", "publisher_count": pub_count, "series_count": pub_info['series_count']})
+
+
+        #if len(watch) > 0:
+        #    logger.info('[SHIZZLE-WHIZZLE] Now queueing to mass add %s new series to your watchlist' % len(watch))
+        #    try:
+        #        importer.importer_thread(watch)
+        #    except Exception:
+        #        pass
+
+    dump_that_shizzle.exposed = True
+
+    def get_description(self, **args):
+        for k,v in list(args.items()):
+            if k == 'id':
+                comicid = v[1:]
+
+        myDB = db.DBConnection()
+        desc = myDB.selectone('SELECT Description, DescriptionEdit, ComicLocation FROM comics WHERE comicid=?', [comicid]).fetchone()
+
+        description_load = None
+        if os.path.exists(os.path.join(desc['ComicLocation'], 'series.json')):
+            try:
+                with open(os.path.join(desc['ComicLocation'], 'series.json')) as j_file:
+                    metainfo = json.load(j_file)
+                description_load = metainfo['metadata'][0]['description']
+            except Exception as e:
+                try:
+                    description_load = metainfo['metadata'][0]['description_formatted']
+                except Exception as e:
+                    logger.info('No description found in metadata. Reloading from dB if available.[error: %s]' % e)
+
+        if description_load is not None:
+            return description_load
+        elif desc:
+            if desc['DescriptionEdit']:
+                return desc['DescriptionEdit']
+            else:
+                return desc['Description']
+        else:
+            return 'No description available.'
+    get_description.exposed = True
+
+    def update_metadata(self, comicid):
+        myDB = db.DBConnection()
+        comic = myDB.selectone('SELECT * FROM comics WHERE ComicID=?', [comicid]).fetchone()
+        if comic:
+            description_load = None
+            if not os.path.exists(comic['ComicLocation']) and mylar.CONFIG.CREATE_FOLDERS is False:
+                try:
+                    checkdirectory = filechecker.validateAndCreateDirectory(comic['ComicLocation'], True)
+                except Exception as e:
+                    logger.warn('[%s] Unable to create series directory @ %s. Aborting updating of series.json' % (e, comic['ComicLocation']))
+                    return
+                else:
+                    if checkdirectory is False:
+                        logger.warn('Unable to create series directory @ %s. Aborting updating of series.json' % (comic['ComicLocation']))
+                        return
+
+            if os.path.exists(os.path.join(comic['ComicLocation'], 'series.json')):
+                try:
+                    with open(os.path.join(comic['ComicLocation'], 'series.json')) as j_file:
+                        metainfo = json.load(j_file)
+                        logger.info('metainfo_loaded: %s' % (metainfo,))
+                    description_load = metainfo['metadata'][0]['description']
+                except Exception as e:
+                    try:
+                        description_load = metainfo['metadata'][0]['description_formatted']
+                    except Exception as e:
+                        logger.info('No description found in metadata. Reloading from dB if available.[error: %s]' % e)
+
+            c_date = datetime.date(int(comic['LatestDate'][:4]), int(comic['LatestDate'][5:7]), 1)
+            n_date = datetime.date.today()
+            recentchk = (n_date - c_date).days
+            if comic['NewPublish'] is True:
+                seriesStatus = 'Continuing'
+            else:
+                #do this just incase and as an extra measure of accuracy hopefully.
+                if recentchk < 55:
+                    seriesStatus = 'Continuing'
+                else:
+                    seriesStatus = 'Ended'
+
+            clean_issue_list = None
+            if comic['Collects'] != 'None':
+                clean_issue_list = comic['Collects']
+
+            if description_load is not None:
+                cdes_removed = re.sub(r'\n', '', description_load).strip()
+                cdes_formatted = description_load
+            elif comic['DescriptionEdit'] is not None:
+                cdes_removed = re.sub(r'\n', ' ', comic['DescriptionEdit']).strip()
+                cdes_formatted = comic['DescriptionEdit']
+            else:
+                if comic['Description'] is not None:
+                    cdes_removed = re.sub(r'\n', '', comic['Description']).strip()
+                else:
+                    cdes_removed = comic['Description']
+                    logger.warn('Series does not have a description. Not populating, but you might need to do a Refresh Series to fix this')
+                cdes_formatted = comic['Description']
+
+            comicVol = comic['ComicVersion']
+            if all([mylar.CONFIG.SETDEFAULTVOLUME is True, comicVol is None]):
+                comicVol = 'v1'
+            if comicVol is not None:
+                if comicVol.isdigit():
+                    comicVol = 'v' + comic['ComicVersion']
+                    logger.info('Updated version to :' + str(comicVol))
+                    if all([mylar.CONFIG.SETDEFAULTVOLUME is False, comicVol == 'v1']):
+                       comicVol = None
+            else:
+                if mylar.CONFIG.SETDEFAULTVOLUME is True:
+                    comicVol = 'v1'
+
+            if any([comic['ComicYear'] is None, comic['ComicYear'] == '0000', comic['ComicYear'][-1:] == '-']):
+                SeriesYear = issued['firstdate'][:4]
+            else:
+                SeriesYear = comic['ComicYear']
+
+            csyear = comic['Corrected_SeriesYear']
+
+            if any([int(SeriesYear) > int(datetime.datetime.now().year) + 1, int(SeriesYear) == 2099]) and csyear is not None:
+                logger.info('Corrected year of ' + str(SeriesYear) + ' to corrected year for series that was manually entered previously of ' + str(csyear))
+                SeriesYear = csyear
+
+            if all([int(comic['Total']) == 1, SeriesYear < helpers.today()[:4], comic['Type'] != 'One-Shot', comic['Type'] != 'TPB']):
+                logger.info('Determined to be a one-shot issue. Forcing Edition to One-Shot')
+                booktype = 'One-Shot'
+            else:
+                booktype = comic['Type']
+
+            if comic['Corrected_Type'] and comic['Corrected_Type'] != booktype:
+                booktype = comic['Corrected_Type']
+
+            c_image = comic
+            metadata = {}
+            metadata['metadata'] = [(
+                                        {'type': 'comicSeries',
+                                         'publisher': comic['ComicPublisher'],
+                                         'imprint': comic['PublisherImprint'],
+                                         'name': comic['ComicName'],
+                                         'comicid': comicid,
+                                         'year': SeriesYear,
+                                         'description_text': cdes_removed,
+                                         'description_formatted': cdes_formatted,
+                                         'volume': comicVol,
+                                         'booktype': booktype,
+                                         'collects': clean_issue_list,
+                                         'ComicImage': comic['ComicImageURL'],
+                                         'total_issues': comic['Total'],
+                                         'publication_run': comic['ComicPublished'],
+                                         'status': seriesStatus}
+            )]
+
+            try:
+                with open(os.path.join(comic['ComicLocation'], 'series.json'), 'w', encoding='utf-8') as outfile:
+                    json.dump(metadata, outfile, indent=4, ensure_ascii=False)
+            except Exception as e:
+                logger.error('Unable to write series.json to %s. Error returned: %s' % (comic['ComicLocation'], e))
+            else:
+                logger.fdebug('Successfully written series.json file to %s' % comic['ComicLocation'])
+    update_metadata.exposed = True
+
+    def weekly_publisherlisting(self, weeknumber, year):
+        comiclist = []
+        myDB = db.DBConnection()
+        thelist = myDB.select("SELECT Publisher FROM weekly WHERE weeknumber=? AND year=? GROUP BY Publisher ORDER BY Publisher ASC", [weeknumber, year])
+        for ts in thelist:
+            comiclist.append({"name": ts['publisher']})
+        return json.dumps(comiclist)
+    weekly_publisherlisting.exposed=True
+
+    def get_the_pubs(self):
+        x = []
+        if mylar.CONFIG.MASS_PUBLISHERS:
+            if type(mylar.CONFIG.MASS_PUBLISHERS) != list:
+                try:
+                    mylar.CONFIG.MASS_PUBLISHERS = json.loads(mylar.CONFIG.MASS_PUBLISHERS)
+                except Exception:
+                    pass
+            for i in mylar.CONFIG.MASS_PUBLISHERS:
+                x.append({'name': i})
+        return json.dumps(x)
+    get_the_pubs.exposed = True
 
