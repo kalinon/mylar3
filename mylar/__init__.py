@@ -157,7 +157,7 @@ DDL_LOCK = False
 CMTAGGER_PATH = None
 STATIC_COMICRN_VERSION = "1.01"
 STATIC_APC_VERSION = "2.04"
-ISSUE_EXCEPTIONS = ['AU', 'AI', 'INH', 'NOW', 'MU', 'HU', 'LR', 'A', 'B', 'C', 'X', 'O','SUMMER', 'SPRING', 'FALL', 'WINTER', 'PREVIEW', 'OMEGA']
+ISSUE_EXCEPTIONS = ['AU', 'AI', 'INH', 'NOW', 'MU', 'HU', 'LR', 'A', 'B', 'C', 'X', 'O','SUMMER', 'SPRING', 'FALL', 'WINTER', 'PREVIEW', 'OMEGA', "DIRECTOR'S CUT", "(DC)"]
 SAB_PARAMS = None
 TMP_PROV = None
 EXT_IP = None
@@ -275,7 +275,8 @@ def initialize(config_file):
             update_imprints = True
             if os.path.exists(pub_path):
                 filetime = max(os.path.getctime(pub_path), os.path.getmtime(pub_path))
-                if ((time.time() > filetime) / 3600 > 24):
+                pub_diff = ((time.time() - filetime) / 3600)
+                if pub_diff > 24:
                     logger.info('[IMPRINT_LOADS] Publisher imprint listing found, but possibly stale ( > 24hrs). Retrieving up-to-date listing')
                 else:
                     update_imprints = False
@@ -309,6 +310,9 @@ def initialize(config_file):
 
         if CONFIG.LOCMOVE:
             helpers.updateComicLocation()
+
+        # make sure the intLatestIssue field is populated with values...
+        helpers.latestissue_update()
 
         #Ordering comics here
         if mylar.MAINTENANCE is False:
@@ -450,6 +454,7 @@ def start():
 
             if CONFIG.ENABLE_DDL is True:
                 queue_schedule('ddl_queue', 'start')
+
             helpers.latestdate_fix()
 
             if CONFIG.ALT_PULL == 2:
@@ -731,7 +736,7 @@ def dbcheck():
         except sqlite3.OperationalError:
             logger.warn('Unable to update readinglist table to new storyarc table format.')
 
-    c.execute('CREATE TABLE IF NOT EXISTS comics (ComicID TEXT UNIQUE, ComicName TEXT, ComicSortName TEXT, ComicYear TEXT, DateAdded TEXT, Status TEXT, IncludeExtras INTEGER, Have INTEGER, Total INTEGER, ComicImage TEXT, FirstImageSize INTEGER, ComicPublisher TEXT, PublisherImprint TEXT, ComicLocation TEXT, ComicPublished TEXT, NewPublish TEXT, LatestIssue TEXT, LatestDate TEXT, Description TEXT, DescriptionEdit TEXT, QUALalt_vers TEXT, QUALtype TEXT, QUALscanner TEXT, QUALquality TEXT, LastUpdated TEXT, AlternateSearch TEXT, UseFuzzy TEXT, ComicVersion TEXT, SortOrder INTEGER, DetailURL TEXT, ForceContinuing INTEGER, ComicName_Filesafe TEXT, AlternateFileName TEXT, ComicImageURL TEXT, ComicImageALTURL TEXT, DynamicComicName TEXT, AllowPacks TEXT, Type TEXT, Corrected_SeriesYear TEXT, Corrected_Type TEXT, TorrentID_32P TEXT, LatestIssueID TEXT, Collects CLOB, IgnoreType INTEGER, AgeRating TEXT, FilesUpdated TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS comics (ComicID TEXT UNIQUE, ComicName TEXT, ComicSortName TEXT, ComicYear TEXT, DateAdded TEXT, Status TEXT, IncludeExtras INTEGER, Have INTEGER, Total INTEGER, ComicImage TEXT, FirstImageSize INTEGER, ComicPublisher TEXT, PublisherImprint TEXT, ComicLocation TEXT, ComicPublished TEXT, NewPublish TEXT, LatestIssue TEXT, intLatestIssue INT, LatestDate TEXT, Description TEXT, DescriptionEdit TEXT, QUALalt_vers TEXT, QUALtype TEXT, QUALscanner TEXT, QUALquality TEXT, LastUpdated TEXT, AlternateSearch TEXT, UseFuzzy TEXT, ComicVersion TEXT, SortOrder INTEGER, DetailURL TEXT, ForceContinuing INTEGER, ComicName_Filesafe TEXT, AlternateFileName TEXT, ComicImageURL TEXT, ComicImageALTURL TEXT, DynamicComicName TEXT, AllowPacks TEXT, Type TEXT, Corrected_SeriesYear TEXT, Corrected_Type TEXT, TorrentID_32P TEXT, LatestIssueID TEXT, Collects CLOB, IgnoreType INTEGER, AgeRating TEXT, FilesUpdated TEXT, seriesjsonPresent INT)')
     c.execute('CREATE TABLE IF NOT EXISTS issues (IssueID TEXT, ComicName TEXT, IssueName TEXT, Issue_Number TEXT, DateAdded TEXT, Status TEXT, Type TEXT, ComicID TEXT, ArtworkURL Text, ReleaseDate TEXT, Location TEXT, IssueDate TEXT, DigitalDate TEXT, Int_IssueNumber INT, ComicSize TEXT, AltIssueNumber TEXT, IssueDate_Edit TEXT, ImageURL TEXT, ImageURL_ALT TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS snatched (IssueID TEXT, ComicName TEXT, Issue_Number TEXT, Size INTEGER, DateAdded TEXT, Status TEXT, FolderName TEXT, ComicID TEXT, Provider TEXT, Hash TEXT, crc TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS upcoming (ComicName TEXT, IssueNumber TEXT, ComicID TEXT, IssueID TEXT, IssueDate TEXT, Status TEXT, DisplayComicName TEXT)')
@@ -819,6 +824,11 @@ def dbcheck():
         c.execute('SELECT ForceContinuing from comics')
     except sqlite3.OperationalError:
         c.execute('ALTER TABLE comics ADD COLUMN ForceContinuing INTEGER')
+
+    try:
+        c.execute('SELECT intLatestIssue from comics')
+    except sqlite3.OperationalError:
+        c.execute('ALTER TABLE comics ADD COLUMN intLatestIssue INTEGER')
 
     try:
         c.execute('SELECT ComicName_Filesafe from comics')
@@ -909,6 +919,11 @@ def dbcheck():
         c.execute('SELECT FilesUpdated from comics')
     except sqlite3.OperationalError:
         c.execute('ALTER TABLE comics ADD COLUMN FilesUpdated TEXT')
+
+    try:
+        c.execute('SELECT seriesjsonPresent from comics')
+    except sqlite3.OperationalError:
+        c.execute('ALTER TABLE comics ADD COLUMN seriesjsonPresent INT')
 
     try:
         c.execute('SELECT DynamicComicName from comics')
@@ -1416,7 +1431,7 @@ def dbcheck():
 #        c.execute('ALTER TABLE importresults ADD COLUMN MetaData TEXT')
 
     #let's delete errant comics that are stranded (ie. Comicname = Comic ID: )
-    c.execute("DELETE from comics WHERE ComicName='None' OR ComicName LIKE 'Comic ID%' OR ComicName is NULL")
+    c.execute("DELETE from comics WHERE ComicName='None' OR ComicName LIKE 'Comic ID%' OR ComicName is NULL OR ComicName like '%Fetch%failed%'")
     c.execute("DELETE from issues WHERE ComicName='None' OR ComicName LIKE 'Comic ID%' OR ComicName is NULL")
     c.execute("DELETE from issues WHERE ComicID is NULL")
     c.execute("DELETE from annuals WHERE ComicName='None' OR ComicName is NULL or Issue_Number is NULL")

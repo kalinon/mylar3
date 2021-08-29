@@ -983,6 +983,8 @@ def new_pullcheck(weeknumber, pullyear, comic1off_name=None, comic1off_id=None, 
                                 annual_ids.append({'ComicID':    an['ReleaseComicID'],
                                                    'ComicName':  an['ReleaseComicName']})
 
+                    annDyn = re.sub('2021 annual', '', watch['DynamicName'].lower()).strip()
+                    annDyn = re.sub('annual', '', annDyn.lower()).strip()
                     weeklylist.append({'ComicName':       watch['ComicName'],
                                        'SeriesYear':      watch['ComicYear'],
                                        'ComicID':         watch['ComicID'],
@@ -990,7 +992,7 @@ def new_pullcheck(weeknumber, pullyear, comic1off_name=None, comic1off_id=None, 
                                        'Booktype':        watch['BookType'],
                                        'latestIssue':     watch['LatestIssue'],
                                        'DynamicName':     watch['DynamicName'],
-                                       'AnnDynamicName':  re.sub('annual', '', watch['DynamicName'].lower()).strip(),
+                                       'AnnDynamicName':  annDyn,
                                        'AlternateNames':  altnames,
                                        'AnnualIDs':       annual_ids})
                 else:
@@ -1023,6 +1025,7 @@ def new_pullcheck(weeknumber, pullyear, comic1off_name=None, comic1off_id=None, 
                     annualidmatch = [x for x in weeklylist if week['comicid'] is not None and ([xa for xa in x['AnnualIDs'] if int(xa['ComicID']) == int(week['comicid'])])]
                     if not annualidmatch:
                         annualidmatch = [x for x in weeklylist if week['annuallink'] is not None and (int(x['ComicID']) == int(week['annuallink']))]
+
                 #The above will auto-match against ComicID if it's populated on the pullsite, otherwise do name-matching.
                 namematch = [ab for ab in weeklylist if ab['DynamicName'] == week['dynamicname']]
                 #logger.fdebug('rowid: ' + str(week['rowid']))
@@ -1039,19 +1042,24 @@ def new_pullcheck(weeknumber, pullyear, comic1off_name=None, comic1off_id=None, 
                         comicid = idmatch[0]['ComicID'].strip()
                         logger.fdebug('[WEEKLY-PULL-ID] Series Match to ID --- ' + comicname + ' [' + comicid + ']')
                     elif annualidmatch:
-                        try:
-                            if 'annual' in week['ComicName'].lower():
-                                comicname = annualidmatch[0]['AnnualIDs'][0]['ComicName'].strip()
-                            else:
-                                comicname = week['ComicName']
-                        except:
-                            comicname = week['ComicName']
+                        comicname = week['ComicName']
                         latestiss = annualidmatch[0]['latestIssue'].strip()
-                        if mylar.CONFIG.ANNUALS_ON:
-                            comicid = annualidmatch[0]['ComicID'].strip()
-                        else:
+                        try:
+                           # if x['annuals'] is none cause CV hasn't updated yet, we need to take  the week['annualllink'] value and refresh.
                             comicid = annualidmatch[0]['AnnualIDs'][0]['ComicID'].strip()
-                        logger.fdebug('[WEEKLY-PULL-ANNUAL] Series Match to ID --- ' + comicname + ' [' + comicid + ']')
+                        except Exception as e:
+                            comicid = week['comicid']
+                        else:
+                            if mylar.CONFIG.ANNUALS_ON:
+                                comicid = None
+                                for x in annualidmatch[0]['AnnualIDs']:
+                                    if week['comicid'] == x['ComicID'] and week['annuallink'] is not None:
+                                        comicid = x['ComicID'].strip()
+                                        comicname = x['ComicName']
+                                if not comicid:
+                                    pass
+                            if comicid:
+                                logger.fdebug('[WEEKLY-PULL-ANNUAL] Series Match to ID --- ' + comicname + ' [' + comicid + ']')
                     else:
                         #if it's a name metch, it means that CV hasn't been populated yet with the necessary data
                         #do a quick issue check to see if the next issue number is in sequence and not a #1, or like #900
@@ -1139,7 +1147,10 @@ def new_pullcheck(weeknumber, pullyear, comic1off_name=None, comic1off_id=None, 
 
                     if all([statusupdate is not None, statusupdate['Status'] != 'incorrect_match']):
                         # here we add to comics.latest
-                        updater.latest_update(ComicID=comicid, LatestIssue=week['issue'], LatestDate=ComicDate)
+                        if mylar.CONFIG.ANNUALS_ON:
+                            updater.latest_update(ComicID=statusupdate['ComicID'], LatestIssue=week['issue'], LatestDate=ComicDate, ReleaseComicID=comicid)
+                        else:
+                            updater.latest_update(ComicID=comicid, LatestIssue=week['issue'], LatestDate=ComicDate)
 
                     # here we update status of weekly table...
                     mismatched = False
@@ -1632,13 +1643,13 @@ def future_check():
                             logger.fdebug('length match differential set for an allowance of 20%')
                             logger.fdebug('actual differential in length between result and series title: ' + str((length_match * 100)-100) + '%')
                             if ((length_match * 100)-100) > 20:
-                                logger.fdebug('there are too many extra words to consider this as match for the given title. Ignoring this result.') 
+                                logger.fdebug('there are too many extra words to consider this as match for the given title. Ignoring this result.')
                                 continue
                             new_match = pos_match['name'].lower()
                             split_series = ser['ComicName'].lower().split()
                             for cw in catch_words:
                                 for x in new_match.split():
-                                    #logger.fdebug('comparing x: ' + str(x) + ' to cw: ' + str(cw)) 
+                                    #logger.fdebug('comparing x: ' + str(x) + ' to cw: ' + str(cw))
                                     if x == cw:
                                         new_match = re.sub(x, '', new_match)
 
@@ -1665,12 +1676,12 @@ def future_check():
                                             word_match+=1
                                     except ValueError:
                                         break
-                                i+=1                                
+                                i+=1
                             logger.fdebug('word match score of : ' + str(word_match) + ' / ' + str(len(split_series)))
                             if word_match == len(split_series) or (word_match / len(split_series)) > 80:
                                  logger.fdebug('[' + pos_match['name'] + '] considered a match - word matching percentage is greater than 80%. Attempting to auto-add series into watchlist.')
                                  cid = pos_match['comicid']
-                                 matched = True                
+                                 matched = True
 
                 if matched:
                     #we should probably load all additional issues for the series on the futureupcoming list that are marked as Wanted and then

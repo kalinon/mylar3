@@ -70,6 +70,7 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'AUTOWANT_ALL': (bool, 'General', False),
     'COMIC_COVER_LOCAL': (bool, 'General', False),
     'SERIES_METADATA_LOCAL': (bool, 'General', False),
+    'SERIESJSON_FILE_PRIORITY': (bool, 'General', False),
     'COVER_FOLDER_LOCAL': (bool, 'General', False),
     'ADD_TO_CSV': (bool, 'General', True),
     'SKIPPED2WANTED': (bool, 'General', False),
@@ -87,6 +88,8 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'BACKUP_ON_START': (bool, 'General', False),
     'BACKFILL_LENGTH': (int, 'General', 8),  # weeks
     'BACKFILL_TIMESPAN': (int, 'General', 10),   # minutes
+    'PROBLEM_DATES': (str, 'General', []),
+    'PROBLEM_DATES_SECONDS': (int, 'General', 60),
 
     'RSS_CHECKINTERVAL': (int, 'Scheduler', 20),
     'SEARCH_INTERVAL': (int, 'Scheduler', 360),
@@ -783,9 +786,15 @@ class Config(object):
 
     def writeconfig(self, values=None):
         logger.fdebug("Writing configuration to file")
-        self.provider_sequence()
         config.set('Newznab', 'extra_newznabs', ', '.join(self.write_extras(self.EXTRA_NEWZNABS)))
-        config.set('Torznab', 'extra_torznabs', ', '.join(self.write_extras(self.EXTRA_TORZNABS)))
+        tmp_torz = self.write_extras(self.EXTRA_TORZNABS)
+        config.set('Torznab', 'extra_torznabs', ', '.join(tmp_torz))
+
+        # this needs to revert from , to # so that it is stored properly (multiple categories)
+        setattr(self, 'EXTRA_NEWZNABS', self.get_extra_newznabs())
+        setattr(self, 'EXTRA_TORZNABS', self.get_extra_torznabs())
+
+        self.provider_sequence()
 
         ###this should be moved elsewhere...
         if type(self.IGNORED_PUBLISHERS) != list:
@@ -811,6 +820,7 @@ class Config(object):
             logger.fdebug('Configuration written to disk.')
         except IOError as e:
             logger.warn("Error writing configuration file: %s", e)
+
 
     def encrypt_items(self, mode='encrypt', updateconfig=False):
         encryption_list = OrderedDict({
@@ -1056,6 +1066,18 @@ class Config(object):
                     logger.warn('[MASS_PUBLISHERS] Unable to convert publishers [%s]. Error returned: %s' % (self.MASS_PUBLISHERS, e))
         logger.info('[MASS_PUBLISHERS] Auto-add for weekly publishers set to: %s' % (self.MASS_PUBLISHERS,))
 
+        if len(self.PROBLEM_DATES) > 0 and self.PROBLEM_DATES != '[]':
+            if type(self.PROBLEM_DATES) != list:
+                try:
+                    self.PROBLEM_DATES = json.loads(self.PROBLEM_DATES)
+                except Exception as e:
+                    logger.warn('unable to load problem dates')
+        else:
+            setattr(self, 'PROBLEM_DATES', ['2021-07-14 04:00:34'])
+            config.set('General', 'problem_dates', json.dumps(self.PROBLEM_DATES))
+
+        logger.info('[PROBLEM_DATES] Problem dates loaded: %s' % (self.PROBLEM_DATES,))
+
         #comictagger - force to use included version if option is enabled.
         import comictaggerlib.ctversion as ctversion
         logger.info('[COMICTAGGER] Version detected: %s' % ctversion.version)
@@ -1119,6 +1141,16 @@ class Config(object):
                 mylar.queue_schedule('ddl_queue', 'start')
             elif self.ENABLE_DDL is False:
                 mylar.queue_schedule('ddl_queue', 'stop')
+
+        if self.FOLDER_FORMAT is None:
+            setattr(self, 'FOLDER_FORMAT', '$Series ($Year)')
+
+        if '$Annual' in self.FOLDER_FORMAT:
+            logger.fdebug('$Annual has been depreciated as a folder format option. Auto-removing from your folder format scheme.')
+            ann_removed = re.sub(r'\$annual', '', self.FOLDER_FORMAT, flags=re.I).strip()
+            ann_remove = re.sub(r'\s+', ' ', ann_removed).strip()
+            setattr(self, 'FOLDER_FORMAT', ann_remove)
+            config.set('General', 'folder_format', ann_remove)
 
         if not self.DDL_LOCATION:
             self.DDL_LOCATION = self.CACHE_DIR
@@ -1214,11 +1246,33 @@ class Config(object):
         return KEYS_32P
 
     def get_extra_newznabs(self):
-        extra_newznabs = list(zip(*[iter(self.EXTRA_NEWZNABS.split(', '))]*6))
+        extra_newznabs = self.EXTRA_NEWZNABS
+        if type(extra_newznabs) != list:
+            extra_newznabs = list(zip(*[iter(extra_newznabs.split(', '))]*6))
+        x_newzcat = []
+        for x in extra_newznabs:
+            x_cat = x[4]
+            if '#' in x_cat:
+                x_t = x[4].split('#')
+                x_cat = ','.join(x_t)
+                if x_cat[0] == ',':
+                    x_cat = re.sub(',', '#', x_cat, 1)
+            x_newzcat.append((x[0],x[1],x[2],x[3],x_cat,x[5]))
+        extra_newznabs = x_newzcat
         return extra_newznabs
 
     def get_extra_torznabs(self):
-        extra_torznabs = list(zip(*[iter(self.EXTRA_TORZNABS.split(', '))]*6))
+        extra_torznabs = self.EXTRA_TORZNABS
+        if type(extra_torznabs) != list:
+            extra_torznabs = list(zip(*[iter(extra_torznabs.split(', '))]*6))
+        x_torcat = []
+        for x in extra_torznabs:
+            x_cat = x[4]
+            if '#' in x_cat:
+                x_t = x[4].split('#')
+                x_cat = ','.join(x_t)
+            x_torcat.append((x[0],x[1],x[2],x[3],x_cat,x[5]))
+        extra_torznabs = x_torcat
         return extra_torznabs
 
     def get_ignored_pubs(self):
@@ -1269,7 +1323,7 @@ class Config(object):
                     PPR.append(en_name)
                     PR_NUM +=1
 
-        if self.ENABLE_TORZNAB:
+        if self.ENABLE_TORZNAB and self.ENABLE_TORRENT_SEARCH:
             for ets in self.EXTRA_TORZNABS:
                 if str(ets[5]) == '1': # if torznabs are enabled
                     if ets[0] == "":
@@ -1385,7 +1439,11 @@ class Config(object):
         for item in value:
             for i in item:
                 try:
-                    if "\"" in i and " \"" in i:
+                    if value.index(i) == 4:
+                        ib = i
+                        if ',' in ib:
+                            ib = re.sub(',', '#', ib).strip()
+                    elif "\"" in i and " \"" in i:
                         ib = str(i).replace("\"", "").strip()
                     else:
                         ib = i

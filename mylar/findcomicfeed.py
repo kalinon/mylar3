@@ -36,8 +36,8 @@ def Startit(searchName, searchIssue, searchYear, ComicVersion, IssDateFix, bookt
 
     searchName = re.sub('\s+', ' ', searchName)
     searchName = re.sub("[\,\:]", "", searchName).strip()
-    encodeSearch = urllib.parse.quote_plus(searchName)
-    splitSearch = encodeSearch.split(" ")
+    searchName = re.sub("[\/]", " ", searchName).strip()
+    splitSearch = searchName.split(" ")
 
     tmpsearchIssue = searchIssue
 
@@ -118,7 +118,7 @@ def Startit(searchName, searchIssue, searchYear, ComicVersion, IssDateFix, bookt
               'poster': "",
               'g[]': 85}
 
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:40.0) Gecko/20100101 Firefox/40.1'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.90 Safari/537.36'}
 
     logger.fdebug('[EXPERIMENTAL] Now searching experimental for %s with numeric issue variations of %s to try and ensure all the bases are covered' % (cName, issue_search))
     url_params = urllib.parse.urlencode(params)
@@ -133,7 +133,7 @@ def Startit(searchName, searchIssue, searchYear, ComicVersion, IssDateFix, bookt
     if r.status_code != 200:
         #typically 403 will not return results, but just catch anything other than a 200
         if r.status_code == 403:
-           return "no results"
+            return "no results"
         else:
             logger.warn('[EXPERIMENTAL] Status code returned: %s' % (r.status_code))
             if r.status_code == 503:
@@ -186,6 +186,7 @@ def Startit(searchName, searchIssue, searchYear, ComicVersion, IssDateFix, bookt
     regexList=[regEx, regExOne, regExTwo, regExThree, regExFour, regExFive]
 
     except_list=['releases', 'gold line', 'distribution', '0-day', '0 day', '0day', 'o-day']
+    block_regex = r"\[\d{2,3}\/\d{2,3}\]"
 
     for entry in keyPair:
         title = entry['title']
@@ -195,7 +196,7 @@ def Startit(searchName, searchIssue, searchYear, ComicVersion, IssDateFix, bookt
         subcnt = 0
         for subs in splitTitle:
             regExCount = 0
-            if len(subs) >= len(cName) and not any(d in subs.lower() for d in except_list) and bool(_digits.search(subs)) is True:
+            if len(subs) >= len(cName) and not (any(d in subs.lower() for d in except_list) or re.search(block_regex, subs)) and bool(_digits.search(subs)) is True:
                 # this will still match on crap like 'For SomeSomayes' especially if the series length < 'For SomeSomayes'
                 if subs.lower().startswith('for'):
                     if cName.lower().startswith('for'):

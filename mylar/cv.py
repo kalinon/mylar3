@@ -17,6 +17,7 @@ import sys
 import os
 import re
 import time
+import pytz
 from mylar import logger, helpers
 import string
 import feedparser
@@ -26,6 +27,8 @@ from bs4 import BeautifulSoup as Soup
 from xml.parsers.expat import ExpatError
 import http.client
 import requests
+import datetime
+from operator import itemgetter
 
 def pulldetails(comicid, rtype, issueid=None, offset=1, arclist=None, comicidlist=None, dateinfo=None):
     #import easy to use xml parser called minidom:
@@ -82,8 +85,11 @@ def pulldetails(comicid, rtype, issueid=None, offset=1, arclist=None, comicidlis
         r = requests.get(PULLURL, params=payload, verify=mylar.CONFIG.CV_VERIFY, headers=mylar.CV_HEADERS)
     except Exception as e:
         logger.warn('Error fetching data from ComicVine: %s' % (e))
-        mylar.BACKENDSTATUS_CV = 'down'
-        return
+        if all(['Expecting value: line 1 column 1' not in str(e), rtype != 'db_updater']):
+            mylar.BACKENDSTATUS_CV = 'down'
+            return
+        else:
+            return False
 
     mylar.BACKENDSTATUS_CV = 'up'
     #logger.fdebug('cv status code : ' + str(r.status_code))
@@ -102,9 +108,12 @@ def pulldetails(comicid, rtype, issueid=None, offset=1, arclist=None, comicidlis
             mylar.BACKENDSTATUS_CV = 'down'
         return
     except Exception as e:
-        logger.warn('[ERROR] Error returned from CV: %s [%s]' % (e, r.content))
-        mylar.BACKENDSTATUS_CV = 'down'
-        return
+        if all(['Expecting value: line 1 column 1' in str(e), rtype == 'db_updater']):
+            return False
+        else:
+            logger.warn('[ERROR] Error returned from CV: %s [%s]' % (e, r.content))
+            mylar.BACKENDSTATUS_CV = 'down'
+            return
     else:
         return dom
 
@@ -220,38 +229,68 @@ def getComic(comicid, rtype, issueid=None, arc=None, arcid=None, arclist=None, c
         dom = pulldetails(comicid, 'single_issue', issueid=issueid, offset=1, arclist=None, comicidlist=None)
         return singleIssue(dom)
     elif rtype == 'db_updater':
-        dateline = {'start_date': dateinfo,
-                    'end_date': helpers.now()}
-        offset = 1
+        dtchk1 = datetime.datetime.strptime(dateinfo, '%Y-%m-%d %H:%M:%S')
+        dtnow = datetime.datetime.now(tz=datetime.timezone.utc)
+        dateline_range = []
+        for x in mylar.CONFIG.PROBLEM_DATES:
+            bline = datetime.datetime.strptime(x, '%Y-%m-%d %H:%M:%S')
+            # check if problem date is greater than the start range
+            if bline > dtchk1:
+                # check if problem date is lower than the end range
+                if bline < dtnow:
+                    dateline_range.append({'start_date': dateinfo,
+                                           'end_date': (bline - datetime.timedelta(seconds=round((mylar.CONFIG.PROBLEM_DATES_SECONDS / 60),2))).strftime('%Y-%m-%d %H:%M:%S')})
+                    dateline_range.append({'start_date': (bline + datetime.timedelta(seconds=round((mylar.CONFIG.PROBLEM_DATES_SECONDS / 60),2))).strftime('%Y-%m-%d %H:%M:%S'),
+                                           'end_date': helpers.now()})
+
+        if not dateline_range:
+            # we store dates in UTC - CV API returns dates in UTC-7 (Pacific time zone)
+            p_zone =  pytz.timezone("US/Pacific")
+            dtchk1 = datetime.datetime.strptime(dateinfo, '%Y-%m-%d %H:%M:%S')
+            p_aware = pytz.utc.localize(dtchk1)
+            p_start = p_aware.astimezone(p_zone)
+
+            p_now = dtnow.astimezone(p_zone)
+            dateline_range.append({'start_date': datetime.datetime.strftime(p_start, '%Y-%m-%d %H:%M:%S'),
+                                   'end_date': datetime.datetime.strftime(p_now, '%Y-%m-%d %H:%M:%S')})
+
         resultlist = {}
         theResults = []
+        for dateline in dateline_range:
+            offset = 1
 
-        resultlist = pulldetails(None, 'db_updater', offset=0, dateinfo=dateline)
+            resultlist = pulldetails(None, 'db_updater', offset=0, dateinfo=dateline)
 
-        totalResults = resultlist['number_of_total_results']
-        logger.fdebug('There are %s total results' % totalResults)
+            totalResults = resultlist['number_of_total_results']
+            logger.fdebug('There are %s total results' % totalResults)
 
-        if not totalResults:
-            return {'count': 0, 'results': [], 'totalcount': 0}
+            if not totalResults:
+                if len(dateline_range) == 1:
+                    return {'count': 0, 'results': [], 'totalcount': 0}
+                else:
+                    continue
 
-        overallResults = totalResults
-        if totalResults > 1500:
-            # force set this here and we'll stagger the remainder over the next hr + depending on size.
-            totalResults = 1500
+            overallResults = totalResults
+            if totalResults > 1500:
+                # force set this here and we'll stagger the remainder over the next hr + depending on size.
+                totalResults = 1500
 
-        countResults = 0
-        while (countResults < int(totalResults)):
-            logger.fdebug('Querying & compiling from %s - %s out of %s results'
-                % (countResults, countResults + 100, totalResults)
-            )
-            if countResults > 0:
-                #new api - have to change to page # instead of offset count
-                offsetcount = countResults
-                resultlist = pulldetails(None, 'db_updater', offset=offsetcount, dateinfo=dateline)
-            resultlist = db_updates(resultlist)
-            theResults = theResults + resultlist
-            #search results are limited to 100 and by pagination now...let's account for this.
-            countResults = countResults + 100
+            countResults = 0
+            while (countResults < int(totalResults)):
+                logger.fdebug('Querying & compiling from %s - %s out of %s results'
+                    % (countResults, countResults + 100, totalResults)
+                )
+                if countResults > 0:
+                    #new api - have to change to page # instead of offset count
+                    offsetcount = countResults
+                    resultlist = pulldetails(None, 'db_updater', offset=offsetcount, dateinfo=dateline)
+                    if resultlist is False:
+                        logger.info('reached as far as (%s) of (%s) and CV has returned an error. Stopping here unfortunately...' % (offsetcount, totalResults))
+                        break
+                resultlist = db_updates(resultlist)
+                theResults = theResults + resultlist
+                #search results are limited to 100 and by pagination now...let's account for this.
+                countResults = countResults + 100
 
         return {'count': len(theResults),
                 'results': theResults,
@@ -453,6 +492,8 @@ def GetComicInfo(comicid, dom, safechk=None, series=False):
                 comic['Type'] = 'Digital'
             elif 'paperback' in comic_deck.lower():
                 comic['Type'] = 'TPB'
+            elif 'graphic novel' in comic_deck.lower():
+                comic['Type'] = 'GN'
             elif 'hardcover' in comic_deck.lower():
                 comic['Type'] = 'HC'
             elif 'oneshot' in re.sub('-', '', comic_deck.lower()).strip():
@@ -463,10 +504,12 @@ def GetComicInfo(comicid, dom, safechk=None, series=False):
     if comic_desc != 'None' and comic['Type'] == 'None':
         if 'print' in comic_desc[:60].lower() and all(['for the printed edition' not in comic_desc.lower(), 'print edition can be found' not in comic_desc.lower(), 'reprints' not in comic_desc.lower()]):
             comic['Type'] = 'Print'
-        elif 'digital' in comic_desc[:60].lower() and 'digital edition can be found' not in comic_desc.lower():
+        elif all(['digital' in comic_desc[:60].lower(), 'graphic novel' not in comic_desc[:60].lower(), 'digital edition can be found' not in comic_desc.lower()]):
             comic['Type'] = 'Digital'
-        elif all(['paperback' in comic_desc[:60].lower(), 'paperback can be found' not in comic_desc.lower()]) or 'collects' in comic_desc[:60].lower():
+        elif all(['paperback' in comic_desc[:60].lower(), 'paperback can be found' not in comic_desc.lower()]) or all(['hardcover' not in comic_desc[:60].lower(), 'collects' in comic_desc[:60].lower()]):
             comic['Type'] = 'TPB'
+        elif all(['graphic novel' in comic_desc[:60].lower(), 'graphic novel can be found' not in comic_desc.lower()]):
+            comic['Type'] = 'GN'
         elif 'hardcover' in comic_desc[:60].lower() and 'hardcover can be found' not in comic_desc.lower():
             comic['Type'] = 'HC'
         elif any(['one-shot' in comic_desc[:60].lower(), 'one shot' in comic_desc[:60].lower()]) and any(['can be found' not in comic_desc.lower(), 'following the' not in comic_desc.lower(), 'after the' not in comic_desc.lower()]):
@@ -934,6 +977,8 @@ def GetSeriesYears(dom):
                     tempseries['Type'] = 'Digital'
                 elif 'paperback' in comic_deck.lower():
                     tempseries['Type'] = 'TPB'
+                elif 'graphic novel' in comic_deck.lower():
+                    tempseries['Type'] = 'GN'
                 elif 'hardcover' in comic_deck.lower():
                     tempseries['Type'] = 'HC'
                 elif 'oneshot' in re.sub('-', '', comic_deck.lower()).strip():
@@ -944,10 +989,12 @@ def GetSeriesYears(dom):
         if comic_desc != 'None' and tempseries['Type'] == 'None':
             if 'print' in comic_desc[:60].lower() and all(['for the printed edition' not in comic_desc.lower(), 'print edition can be found' not in comic_desc.lower(), 'reprints' not in comic_desc.lower()]):
                 tempseries['Type'] = 'Print'
-            elif 'digital' in comic_desc[:60].lower() and 'digital edition can be found' not in comic_desc.lower():
+            elif all(['digital' in comic_desc[:60].lower(), 'graphic novel' not in comic_desc[:60].lower(), 'digital edition can be found' not in comic_desc.lower()]):
                 tempseries['Type'] = 'Digital'
-            elif all(['paperback' in comic_desc[:60].lower(), 'paperback can be found' not in comic_desc.lower()]) or 'collects' in comic_desc[:60].lower():
+            elif all(['paperback' in comic_desc[:60].lower(), 'paperback can be found' not in comic_desc.lower()]) or all(['hardcover' not in comic_desc[:60].lower(), 'collects' in comic_desc[:60].lower()]):
                 tempseries['Type'] = 'TPB'
+            elif all(['graphic novel' in comic_desc[:60].lower(), 'graphic novel can be found' not in comic_desc.lower()]):
+                tempseries['Type'] = 'GN'
             elif 'hardcover' in comic_desc[:60].lower() and 'hardcover can be found' not in comic_desc.lower():
                 tempseries['Type'] = 'HC'
             elif any(['one-shot' in comic_desc[:60].lower(), 'one shot' in comic_desc[:60].lower()]) and any(['can be found' not in comic_desc.lower(), 'following the' not in comic_desc.lower()]):
@@ -1046,6 +1093,7 @@ def GetSeriesYears(dom):
         else:
             tempseries['Issue_List'] = 'None'
 
+        volume_found = None
         while (desdeck > 0):
             if desdeck == 1:
                 if comic_desc == 'None':
@@ -1060,10 +1108,23 @@ def GetSeriesYears(dom):
                 break
 
             i = 0
+            looped_once = False
             while (i < 2):
                 if 'volume' in comicDes.lower():
                     #found volume - let's grab it.
                     v_find = comicDes.lower().find('volume')
+
+                    if all([comicDes.lower().find('annual issue from') > 0, volume_found is not None, looped_once is False]):
+                        logger.fdebug('wrong annual declaration found previously. Attempting to correct')
+                        cd_find = comic_desc.lower().find('annual issue from') + 17
+                        comicDes = comic_desc[cd_find:cd_find+30]
+                        if 'volume' in comicDes.lower():
+                            v_find = comicDes.lower().find('volume') #_desc[cd_find:cd_find+45].lower().find('volume')
+                            if i == 1:
+                                i = 0
+                            looped_once = True
+                            volume_found = None
+
                     #arbitrarily grab the next 10 chars (6 for volume + 1 for space + 3 for the actual vol #)
                     #increased to 10 to allow for text numbering (+5 max)
                     #sometimes it's volume 5 and ocassionally it's fifth volume.
@@ -1081,7 +1142,6 @@ def GetSeriesYears(dom):
                             sconv = basenums[nums]
                             vfind = re.sub(nums, sconv, vfind.lower())
                             break
-                    #logger.info('volconv: ' + str(volconv))
 
                     #now we attempt to find the character position after the word 'volume'
                     if i == 0:
@@ -1099,16 +1159,17 @@ def GetSeriesYears(dom):
                     vf = re.findall('[^<>]+', vfind)
                     try:
                         ledigit = re.sub("[^0-9]", "", vf[0])
-                        if ledigit != '':
-                            tempseries['Volume'] = ledigit
-                            logger.fdebug("Volume information found! Adding to series record : volume %s" % tempseries['Volume'])
-                            break
+                        if ledigit != '' and volume_found is None:
+                            volume_found = ledigit
+                            #tempseries['Volume'] = ledigit
+                            logger.fdebug("Volume information found! Adding to series record : volume %s" % volume_found)
                     except:
                         pass
 
                     i += 1
                 else:
                     i += 1
+            tempseries['Volume'] = volume_found
 
             if tempseries['Volume'] == 'None':
                 logger.fdebug('tempseries[Volume]: %s' % tempseries['Volume'])
@@ -1116,7 +1177,7 @@ def GetSeriesYears(dom):
             else:
                 break
 
-        if all([int(number_issues) == 1, tempseries['SeriesYear'] < helpers.today()[:4], tempseries['Type'] != 'One-Shot', tempseries['Type'] != 'TPB']):
+        if all([int(number_issues) == 1, tempseries['SeriesYear'] < helpers.today()[:4], tempseries['Type'] != 'One-Shot', tempseries['Type'] != 'TPB', tempseries['Type'] != 'HC', tempseries['Type'] != 'GN']):
             booktype = 'One-Shot'
         else:
             booktype = tempseries['Type']
@@ -1270,7 +1331,7 @@ def db_updates(results, rtype='issueid'):
     # comicid = update based on changes to comicid
     dataset = []
     data = results['results']
-    for x in data:
+    for x in sorted(data, key=itemgetter('date_last_updated'), reverse=False):
         if rtype == 'comicid':
             xlastissue = None
             if x['last_issue'] is not None:

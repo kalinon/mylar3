@@ -199,7 +199,8 @@ def human2bytes(s):
 
 def replace_all(text, dic):
     for i, j in dic.items():
-        text = text.replace(i, j)
+        if all([j != 'None', j is not None]):
+            text = text.replace(i, j)
     return text.rstrip()
 
 def cleanName(string):
@@ -835,22 +836,31 @@ def updateComicLocation():
                     comversion = 'None'
                 #if comversion is None, remove it so it doesn't populate with 'None'
                 if comversion == 'None':
-                    chunk_f_f = re.sub('\$VolumeN', '', mylar.CONFIG.FOLDER_FORMAT)
+                    chunk_f_f = re.sub('\$VolumeN', '', chunk_folder_format)
+                    chunk_f = re.compile(r'\s+')
+                    chunk_folder = chunk_f.sub(' ', chunk_f_f)
+                else:
+                    chunk_folder = chunk_folder_format
+
+                imprint = dl['PublisherImprint']
+                if any([imprint is None, imprint == 'None']):
+                    chunk_f_f = re.sub('\$Imprint', '', chunk_folder)
                     chunk_f = re.compile(r'\s+')
                     folderformat = chunk_f.sub(' ', chunk_f_f)
                 else:
-                    folderformat = mylar.CONFIG.FOLDER_FORMAT
+                    folderformat = chunk_folder
+
 
                 #do work to generate folder path
 
                 values = {'$Series':        comicname_folder,
                           '$Publisher':     publisher,
+                          '$Imprint':       imprint,
                           '$Year':          year,
                           '$series':        comicname_folder.lower(),
                           '$publisher':     publisher.lower(),
                           '$VolumeY':       'V' + str(year),
                           '$VolumeN':       comversion,
-                          '$Annual':        'Annual',
                           '$Type':          booktype
                           }
 
@@ -1468,7 +1478,7 @@ def havetotals(refreshit=None):
 
             comictype = comic['Type']
             try:
-                if (any([comictype == 'None', comictype is None, comictype == 'Print']) and comic['Corrected_Type'] != 'TPB') or all([comic['Corrected_Type'] is not None, comic['Corrected_Type'] == 'Print']):
+                if (any([comictype == 'None', comictype is None, comictype == 'Print']) and all([comic['Corrected_Type'] != 'TPB', comic['Corrected_Type'] != 'GN', comic['Corrected_Type'] != 'HC'])) or all([comic['Corrected_Type'] is not None, comic['Corrected_Type'] == 'Print']):
                     comictype = None
                 else:
                     if comic['Corrected_Type'] is not None:
@@ -1483,12 +1493,18 @@ def havetotals(refreshit=None):
             else:
                 cversion = comic['ComicVersion']
 
+            if comic['ComicImage'] is None:
+                comicImage = 'cache/%s.jpg' % comic['ComicID']
+            else:
+                comicImage = comic['ComicImage']
+
+
             comics.append({"ComicID":         comic['ComicID'],
                            "ComicName":       comic['ComicName'],
                            "ComicSortName":   comic['ComicSortName'],
                            "ComicPublisher":  comic['ComicPublisher'],
                            "ComicYear":       comic['ComicYear'],
-                           "ComicImage":      comic['ComicImage'],
+                           "ComicImage":      comicImage,
                            "LatestIssue":     comic['LatestIssue'],
                            "LatestDate":      comic['LatestDate'],
                            "ComicVolume":     cversion,
@@ -2610,10 +2626,16 @@ def updatearc_locs(storyarcid, issues):
                 pathsrc = os.path.join(chk['ComicLocation'], chk['Location'])
                 if not os.path.exists(pathsrc):
                     try:
-                        if all([mylar.CONFIG.MULTIPLE_DEST_DIRS is not None, mylar.CONFIG.MULTIPLE_DEST_DIRS != 'None', os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(chk['ComicLocation'])) != chk['ComicLocation'], os.path.exists(os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(chk['ComicLocation'])))]):
-                            pathsrc = os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(chk['ComicLocation']), chk['Location'])
+                        if all([mylar.CONFIG.MULTIPLE_DEST_DIRS is not None, mylar.CONFIG.MULTIPLE_DEST_DIRS != 'None']):
+                            if os.path.exists(os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(chk['ComicLocation']))):
+                                secondary_folders = os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(chk['ComicLocation']))
+                            else:
+                                ff = mylar.filers.FileHandlers(ComicID=chk['ComicID'])
+                                secondary_folders = ff.secondary_folders(chk['ComicLocation'])
+
+                            pathsrc = os.path.join(secondary_folders, chk['Location'])
                         else:
-                            logger.fdebug(module + ' file does not exist in location: ' + pathdir + '. Cannot valid location - some options will not be available for this item.')
+                            logger.fdebug(module + ' file does not exist in location: ' + pathsrc + '. Cannot validate location - some options will not be available for this item.')
                             continue
                     except:
                         continue
@@ -3073,6 +3095,27 @@ def latestdate_update():
         logger.info('updating latest date for : ' + a['ComicID'] + ' to ' + a['LatestDate'] + ' #' + a['LatestIssue'])
         myDB.upsert("comics", newVal, ctrlVal)
 
+def latestissue_update():
+    myDB = db.DBConnection()
+    cck = myDB.select('SELECT ComicID, LatestIssue FROM comics WHERE intLatestIssue is NULL')
+
+    if cck:
+        c_list = []
+        for ck in cck:
+            c_list.append({'ComicID': ck['ComicID'],
+                           'intLatestIssue': issuedigits(ck['LatestIssue'])})
+
+        logger.info('[LATEST_ISSUE_TO_INT] Updating the latestIssue field for %s series' % (len(c_list)))
+
+        for ct in c_list:
+            try:
+                newVal = {'intLatestIssue': ct['intLatestIssue']}
+                ctrlVal = {'ComicID': ct['ComicID']}
+                myDB.upsert("comics", newVal, ctrlVal)
+            except Exception as e:
+                logger.fdebug('exception encountered: %s' % e)
+                continue
+
 def ddl_downloader(queue):
     myDB = db.DBConnection()
     while True:
@@ -3111,7 +3154,8 @@ def ddl_downloader(queue):
                                             'issueid':      None,
                                             'comicid':      item['comicid'],
                                             'apicall':      True,
-                                            'ddl':          True})
+                                            'ddl':          True,
+                                            'download_info': {'provider': 'DDL', 'id': item['id']}})
                     else:
                         logger.info('%s successfully downloaded - now initiating post-processing for %s' % (ddzstat['filename'], ddzstat['path']))
                         mylar.PP_QUEUE.put({'nzb_name':     ddzstat['filename'],
@@ -3120,7 +3164,8 @@ def ddl_downloader(queue):
                                             'issueid':      item['issueid'],
                                             'comicid':      item['comicid'],
                                             'apicall':      True,
-                                            'ddl':          True})
+                                            'ddl':          True,
+                                            'download_info': {'provider': 'DDL', 'id': item['id']}})
                 except Exception as e:
                     logger.error('process error: %s [%s]' %(e, ddzstat))
             elif all([ddzstat['success'] is True, mylar.CONFIG.POST_PROCESSING is False]):
@@ -3148,7 +3193,7 @@ def postprocess_main(queue):
 
             if mylar.APILOCK is False:
                 try:
-                    pprocess = process.Process(item['nzb_name'], item['nzb_folder'], item['failed'], item['issueid'], item['comicid'], item['apicall'], item['ddl'])
+                    pprocess = process.Process(item['nzb_name'], item['nzb_folder'], item['failed'], item['issueid'], item['comicid'], item['apicall'], item['ddl'], item['download_info'])
                 except:
                     pprocess = process.Process(item['nzb_name'], item['nzb_folder'], item['failed'], item['issueid'], item['comicid'], item['apicall'])
                 pp = pprocess.post_process()
@@ -3212,7 +3257,8 @@ def worker_main(queue):
                                     'issueid':      item['issueid'],
                                     'comicid':      item['comicid'],
                                     'apicall':      True,
-                                    'ddl':          False})
+                                    'ddl':          False,
+                                    'download_info': None})
                 #threading.Thread(target=self.checkFolder, args=[os.path.abspath(os.path.join(snstat['copied_filepath'], os.pardir))]).start()
         else:
             time.sleep(15)
@@ -3310,7 +3356,8 @@ def cdh_monitor(queue, item, nzstat, readd=False):
                                 'issueid':      nzstat['issueid'],
                                 'comicid':      nzstat['comicid'],
                                 'apicall':      nzstat['apicall'],
-                                'ddl':          False})
+                                'ddl':          False,
+                                'download_info': nzstat['download_info']})
         except Exception as e:
             logger.error('process error: %s' % e)
     return

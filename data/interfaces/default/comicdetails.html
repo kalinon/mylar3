@@ -123,7 +123,7 @@
                                 </div>
                                 <div>
                                    <label><big>Publisher: </big><norm>${comic['ComicPublisher']}</norm></label>
-                                   %if comic['PublisherImprint']:
+                                   %if all([comic['PublisherImprint'] is not None, comic['PublisherImprint'] != 'None']):
                                        </br><label><big>Imprint: </big><norm>${comic['PublisherImprint']}</norm></label>
                                    %endif
 	            		</div>
@@ -138,9 +138,18 @@
                                               comictype = comic['Corrected_Type']
                                           else:
                                               comictype = comic['Type']
+
+                                      if comictype == 'HC':
+                                          display_type = 'Hardcover'
+                                      elif comictype == 'GN':
+                                          display_type = 'Graphic Novel'
+                                      elif comictype == 'TPB':
+                                          display_type = 'Trade PaperBack'
+                                      else:
+                                          display_type = comictype
                                 %>
                                 <div>
-                                    <label><big>Edition: </big><norm>${comictype}</norm>
+                                    <label><big>Edition: </big><norm>${display_type}</norm>
                                     <% 
                                         if comicConfig['issue_list'] is not None:
                                             cnt = 0
@@ -189,24 +198,70 @@
                                    <label><big>Issues in Series: </big><norm>${comic['Total']} issues</norm></label>
                                 </div>
                                 <div>
-                                    %if mylar.CONFIG.MULTIPLE_DEST_DIRS is not None and mylar.CONFIG.MULTIPLE_DEST_DIRS != 'None':
-                                       <%
-                                           try:
-                                               archive_path = os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comic['ComicLocation']))
-                                           except:
-                                               archive_path = 'None'
-                                        %>
+                                    <%
+                                        arc_img = None
+                                        arc_tip = None
+                                        archive_path = None
+                                        if all([mylar.CONFIG.MULTIPLE_DEST_DIRS is not None, mylar.CONFIG.MULTIPLE_DEST_DIRS != 'None']):
+                                            try:
+                                                if os.path.exists(os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comic['ComicLocation']))):
+                                                    secondary_folders = os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comic['ComicLocation']))
+                                                else:
+                                                    ff = mylar.filers.FileHandlers(ComicID=comic['ComicID'])
+                                                    secondary_folders = ff.secondary_folders(comic['ComicLocation'])
+                                                archive_path = secondary_folders
+                                            except Exception:
+                                                archive_path = 'None'
+
+                                            try:
+                                                arcstyle = "font-size:12px;"
+                                                if 60 > len(archive_path) > 100:
+                                                    arcstyle = "font-size:11px;"
+                                                elif len (archive_path) > 100:
+                                                    arcstyle = "font-size:10px;"
+                                                if os.path.exists(archive_path):
+                                                    arc_img = "images/success.png"
+                                                    arc_tip = "this directory currently exists"
+                                                else:
+                                                    arc_img = "images/x_red.png"
+                                                    arc_tip = "this directory does not currently exist"
+                                            except Exception:
+                                                arc_img = "imags/x_red.png"
+                                                arc_tip = "this directory does not currently exist"
+
+                                        try:
+                                            tmpstyle = "display:inline-block;float:left;"
+                                            if 60 > len(comic['ComicLocation']) > 100:
+                                                tmpstyle += "font-size:11px;"
+                                            elif len(comic['ComicLocation']) > 100:
+                                                tmpstyle += "font-size:10px;"
+                                            else:
+                                                tmpstyle += "font-size:12px;"
+
+                                            if os.path.exists(comic['ComicLocation']):
+                                                path_img = "images/success.png"
+                                                path_tip = "this directory currently exists"
+                                            else:
+                                                path_img = "images/x_red.png"
+                                                path_tip = "this directory does not currently exist"
+                                        except Exception:
+                                            path_img = "images/x_red.png"
+                                            path_tip = "this directory does not currently exist"
+                                    %>
+                                    %if archive_path is None:
+                                        <label><big>Directory:</big></label><br/>
+                                        <img src="${path_img}" title="${path_tip}" style="float:left;" height="15" width="15" padding="5"><span style="${tmpstyle}">${comic['ComicLocation']}</span></label>
+                                    %else:
                                         %if os.path.exists(archive_path) and archive_path != comic['ComicLocation']:
                                             <label><big>Directories:</big></label><br/>
-                                            <p class="tab"><norm>Primary: ${comic['ComicLocation']}</norm><br/>
-                                            <norm>Secondary: ${archive_path}</norm></label></p>
+                                            <p class="tab"><img src="${path_img}" style="float:left;" title="${path_tip}" height="15" width="15" padding="5"><span style="${tmpstyle}"> Primary: ${comic['ComicLocation']}</span><br/>
+                                            <img src="${arc_img}" title="${arc_tip}" style="float:left;" height="15" width="15" padding="5"><span style="${arcstyle}"> Secondary: ${archive_path}</span></label></p>
                                         %else:
                                             <label><big>Directory:</big><br/>
-                                            <norm>${comic['ComicLocation']}</norm></label>
+                                            <img src="${path_img}" title="${path_tip}" style="float:left;" height="15" width="15" padding="5"><span style="${tmpstyle}">${comic['ComicLocation']}</span></label>
                                         %endif
-                                    %else:
-                                       <label><big>Directory</big><br/><norm>${comic['ComicLocation']}</norm></label>
                                     %endif
+                                    </br>
                                 </div>
                                 %if comicConfig['description']:
                                     <%
@@ -283,7 +338,7 @@
                                                 <label>Force-Type (original:${comic['Type']})</label>
                                                 <select name="force_type">
                                                 <%
-                                                    ftt_list = ['Select', 'TPB', 'Digital', 'One-Shot', 'Print']
+                                                    ftt_list = ['Select', 'TPB', 'HC', 'GN', 'Digital', 'One-Shot', 'Print']
                                                 %>
                                                 %for ftt in ftt_list:
                                                         <%
@@ -310,7 +365,7 @@
                                                 <a href="#" title="Will forcibly mark this series as selected in those instances where it assumes it's a ${comic['Type']}-based series"><img src="images/info32.png" height="16" alt="" /></a>
                                 </div>
                                 <div class="row checkbox right clearfix">
-                                   %if comic['Type'] != 'TPB':
+                                   %if all([comic['Type'] != 'TPB', comic['Type'] != 'HC', comic['Type'] != 'GN']):
                                        <label>Accept all booktype search matches</label>
                                        <input type="checkbox" style="vertical-align: bottom; margin: 3px; margin-top: -3px;" name="ignore_type" value="1" ${comicConfig['ignore_type']} />
                                        <a href="#" title="Will not restrict search matches to just being a matching Edition type (ie. One-Shots/Digitals will match against normal Issues."><img src="images/info32.png" height="16" alt="" /></a>
@@ -346,6 +401,11 @@
                                        <input type="text" name="alt_filename" value="${comic['AlternateFileName']}" size="90">
                                        <a href="#" title="Alternate File Naming"><img src="images/info32.png" height="16" alt="" /></a>
                                        <small>Alternate file-naming to be used when post-processing / renaming files instead of the actual title.</small>
+                                   </div>
+
+                                   <div class="row">
+                                       <label>Publication Imprint</label>
+                                       <input type="text" name="publisher_imprint" value="${comic['PublisherImprint']}" size="90">
                                    </div>
 
                                    <div class="row">
@@ -422,7 +482,7 @@
                         <tr>
                                 <th id="select" align="left"><input type="checkbox" onClick="toggle(this)" name="issues" class="checkbox" /></th>
                                 <th id="int_issuenumber">IntIssNum</th>
-                                <th id="issuenumber">Number</th>
+                                <th id="issuenumber">#</th>
                                 <th id="issuename">Name</th>
                                 <th id="reldate">Date</th>
                                 <th id="status">Status</th>
@@ -456,9 +516,11 @@
                                 <td id="issuenumber">${issue['Issue_Number']}</td>
 
                                 <%
+                                    titledisplay = False
                                     if issue['IssueName'] is not None:
                                         if len(issue['IssueName']) > 70:
-                                            issuename = "%s..." % issue['IssueName'][:70]
+                                            issuename = "%s..." % issue['IssueName'][:67]
+                                            titledisplay = True
                                         else:
                                             issuename = issue['IssueName']
                                         try:
@@ -468,7 +530,11 @@
                                     else:
                                         issuename = None
                                 %>
-                                <td id="issuename">${issuename}</td>
+                                %if titledisplay:
+                                    <td id="issuename" title="${issue['IssueName']}">${issuename}</td>
+                                %else:
+                                    <td id="issuename">${issuename}</td>
+                                %endif
                                 <%
                                     issdate = issue['IssueDate']
                                     dateline = "Publication Date (click to edit)"
@@ -477,7 +543,7 @@
                                         issdate += "**"
                                     endif
                                 %>
-                                <td class="edit" title="${dateline}" id="${issue['ComicID']}.${issue['IssueID']}">${issdate}</td>
+                                <td class="edit" title="${dateline}" style="vertical-align: middle; text-align: center; max-width: 45px;" id="${issue['ComicID']}.${issue['IssueID']}">${issdate}</td>
                                 <td id="status">${issue['Status']}
                                 %if issue['Status'] == 'Downloaded' or issue['Status'] == 'Archived':
                                     <%Csize = mylar.helpers.human_size(issue['ComicSize'])%>
@@ -607,7 +673,7 @@
                         <tr>
                                 <th id="select" align="left"><input type="checkbox" onClick="toggle(this)" name="annuals" class="checkbox" /></th>
                                 <th id="aint_issuenumber">Int_IssNumber</th>
-                                <th id="aissuenumber">Number</th>
+                                <th id="aissuenumber">#</th>
                                 <th id="aissuename">Name</th>
                                 <th id="areldate">Date</th>
                                 <th id="astatus">Status</th>

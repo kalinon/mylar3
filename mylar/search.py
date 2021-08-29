@@ -115,10 +115,13 @@ def search_init(
     if mode == 'want_ann':
         logger.info('Annual/Special issue search detected. Appending to issue #')
         # anything for mode other than None indicates an annual.
-        if all(['annual' not in ComicName.lower(), 'special' not in ComicName.lower()]):
-            ComicName = '%s Annual' % ComicName
+        #if all(['annual' not in ComicName.lower(), 'special' not in ComicName.lower()]):
+        #    ComicName = '%s Annual' % ComicName
+        if '2021 annual' in ComicName.lower():
+            AlternateSearch= '%s Annual' % re.sub('2021 annual', '', ComicName, flags=re.I).strip()
+            logger.info('Setting alternate search to %s because people are gonna people.' % AlternateSearch)
 
-        if all(
+        elif all(
             [
                 AlternateSearch is not None,
                 AlternateSearch != "None",
@@ -345,7 +348,7 @@ def search_init(
                 cmloopit = 1
 
         chktpb = 0
-        if booktype == 'TPB':
+        if any([booktype == 'TPB', booktype =='HC', booktype == 'GN']):
             chktpb = 1
 
         if findit['status'] is True:
@@ -620,7 +623,14 @@ def search_init(
                     if tmp_IssueNumber is not None:
                         issuedisplay = tmp_IssueNumber
                     else:
-                        if any([booktype == 'One-Shot', booktype == 'TPB']):
+                        if any(
+                               [
+                                   booktype == 'One-Shot',
+                                   booktype == 'TPB',
+                                   booktype == 'HC',
+                                   booktype == 'GC'
+                               ]
+                        ):
                             issuedisplay = None
                         else:
                             issuedisplay = StoreDate[5:]
@@ -752,6 +762,9 @@ def NZB_SEARCH(
         category_torznab = torznab_host[4]
         if any([category_torznab is None, category_torznab == 'None']):
             category_torznab = '8020'
+        if '#' in category_torznab:
+            t_cats = category_torznab.split('#')
+            category_torznab = ','.join(t_cats)
         logger.fdebug('Using Torznab host of : %s' % name_torznab)
     elif nzbprov == 'newznab':
         # updated to include Newznab Name now
@@ -768,7 +781,7 @@ def NZB_SEARCH(
         verify = bool(newznab_host[2])
         if '#' in newznab_host[4].rstrip():
             catstart = newznab_host[4].find('#')
-            category_newznab = newznab_host[4][catstart + 1 :]
+            category_newznab = re.sub('#', ',', newznab_host[4][catstart + 1 :]).strip()
             logger.fdebug('Non-default Newznab category set to : %s' % category_newznab)
         else:
             category_newznab = '7030'
@@ -906,7 +919,7 @@ def NZB_SEARCH(
             mod_isssearch = str(issdig) + str(isssearch)
         else:
             if cmloopit == 4:
-                if booktype == 'TPB':
+                if any([booktype == 'TPB', booktype == 'HC', booktype == 'GN']):
                     comsearch = comsrc + "%20v" + str(isssearch)
                 mod_isssearch = ''
             else:
@@ -1779,7 +1792,7 @@ def NZB_SEARCH(
                     or all(
                         [booktype != parsed_comic['booktype'], ignore_booktype is True]
                     )
-                    or booktype == parsed_comic['booktype']
+                    or booktype in parsed_comic['booktype']
                 ):
                     try:
                         fcomic = filechecker.FileChecker(watchcomic=ComicName)
@@ -2057,32 +2070,50 @@ def NZB_SEARCH(
                         logger.fdebug(
                             "We matched on versions for annuals %s" % fndcomicversion
                         )
-                    elif booktype != 'TPB' and (
-                        int(F_ComicVersion) == int(D_ComicVersion)
-                        or int(F_ComicVersion) == int(S_ComicVersion)
+                    elif all(
+                             [
+                                 booktype != 'TPB',
+                                 booktype != 'HC',
+                                 booktype != 'GN',
+                            ]
+                        ) and (
+                            int(F_ComicVersion) == int(D_ComicVersion)
+                            or int(F_ComicVersion) == int(S_ComicVersion)
                     ):
                         logger.fdebug("We matched on versions...%s" % fndcomicversion)
                     else:
-                        if booktype == 'TPB' and (
-                            int(F_ComicVersion) == int(findcomiciss)
-                            and filecomic['justthedigits'] is None
+                        if any(
+                               [
+                                   booktype == 'TPB',
+                                   booktype == 'HC',
+                                   booktype == 'GN',
+                               ]
+                            ) and (
+                                int(F_ComicVersion) == int(findcomiciss)
+                                and filecomic['justthedigits'] is None
                         ):
                             logger.fdebug(
-                                'TPB detected - reassigning volume %s to match as the'
+                                '%s detected - reassigning volume %s to match as the'
                                 ' issue number based on Volume'
-                                % fndcomicversion
+                                % (booktype, fndcomicversion)
                             )
-                        elif booktype == 'TPB' and all(
+                        elif all(
+                                 [
+                                     booktype == 'TPB',
+                                     booktype == 'HC',
+                                     booktype == 'GN',
+                                 ]
+                            ) and all(
                             [
                                 int(F_ComicVersion) == int(findcomiciss),
                                 fndcomicversion is not None,
-                                filecomic['booktype'] == 'TPB',
+                                booktype in filecomic['booktype'],
                                 filecomic['justthedigits'] is None,
                             ]
                         ):
                             logger.fdebug(
-                                'TPB detected - reassigning volume %s to match as the issue number'
-                                % fndcomicversion
+                                '%s detected - reassigning volume %s to match as the issue number'
+                                % (booktype, fndcomicversion)
                             )
                         else:
                             logger.fdebug("Versions wrong. Ignoring possible match.")
@@ -2273,22 +2304,34 @@ def NZB_SEARCH(
                         if (
                             all([intIss is not None, comintIss is not None])
                             and int(intIss) == int(comintIss)
-                            or all(
+                            or (any(
                                 [
-                                    chktpb != 0,
                                     filecomic['booktype'] == 'TPB',
-                                    pc_in is None,
-                                    helpers.issuedigits(F_ComicVersion) == intIss,
+                                    filecomic['booktype'] == 'GN',
+                                    filecomic['booktype'] == 'HC',
+                                    filecomic['booktype'] == 'TPB/GN/HC',
                                 ]
-                            )
-                            or all(
+                                ) and all(
+                                    [
+                                        chktpb != 0,
+                                        pc_in is None,
+                                        helpers.issuedigits(F_ComicVersion) == intIss,
+                                    ]
+                            ))
+                            or (any(
                                 [
-                                    chktpb == 2,
                                     filecomic['booktype'] == 'TPB',
-                                    pc_in is None,
-                                    cmloopit == 1,
+                                    filecomic['booktype'] == 'GN',
+                                    filecomic['booktype'] == 'HC',
+                                    filecomic['booktype'] == 'TPB/GN/HC',
                                 ]
-                            )
+                                )  and all(
+                                    [
+                                        chktpb == 2,
+                                        pc_in is None,
+                                        cmloopit == 1,
+                                    ]
+                            ))
                             or all([cmloopit == 4, findcomiciss is None, pc_in is None])
                             or all([cmloopit == 4, findcomiciss is None, pc_in == 1])
                         ):
@@ -2498,7 +2541,13 @@ def NZB_SEARCH(
         logger.fdebug(
             'booktype:%s / chktpb: %s / findloop: %s' % (booktype, chktpb, findloop)
         )
-        if booktype == 'TPB' and chktpb == 1 and findloop + 1 > findcount:
+        if any(
+               [
+                   booktype == 'TPB',
+                   booktype == 'GN',
+                   booktype == 'HC',
+                ]
+            ) and chktpb == 1 and findloop + 1 > findcount:
             pass  # findloop=-1
         else:
             findloop += 1
@@ -2712,6 +2761,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                                 'IssueArcID': None,
                                 'mode': 'want',
                                 'DateAdded': iss['DateAdded'],
+                                'ComicName': iss['ComicName'],
                             }
                         )
                 elif stloop == 2:
@@ -2743,6 +2793,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                                     'IssueArcID': iss['IssueArcID'],
                                     'mode': 'story_arc',
                                     'DateAdded': iss['DateAdded'],
+                                    'ComicName': iss['ComicName'],
                                 }
                             )
                             cnt += 1
@@ -2774,6 +2825,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                                 'IssueArcID': None,
                                 'mode': 'want_ann',
                                 'DateAdded': iss['DateAdded'],
+                                'ComicName': iss['ReleaseComicName'],
                             }
                         )
                 stloop -= 1
@@ -2850,10 +2902,14 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
 
                     foundNZB = "none"
                     AllowPacks = False
+                    if result['mode'] == 'want_ann' or 'annual' in result['ComicName']:
+                        comicname = result['ComicName']
+                    else:
+                        comicname = comic['ComicName']
                     if all(
                         [result['mode'] == 'story_arc', storyarc_watchlist is False]
                     ):
-                        Comicname_filesafe = helpers.filesafe(comic['ComicName'])
+                        Comicname_filesafe = helpers.filesafe(comicname)
                         SeriesYear = comic['SeriesYear']
                         Publisher = comic['Publisher']
                         AlternateSearch = None
@@ -2912,7 +2968,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                                 '%s #%s did not have a DateAdded recorded, setting it'
                                 ' : %s'
                                 % (
-                                    comic['ComicName'],
+                                    comicname,
                                     result['Issue_Number'],
                                     DateAdded,
                                 )
@@ -2933,7 +2989,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                         )
                         mylar.SEARCH_QUEUE.put(
                             {
-                                'comicname': comic['ComicName'],
+                                'comicname': comicname,
                                 'seriesyear': SeriesYear,
                                 'issuenumber': result['Issue_Number'],
                                 'issueid': result['IssueID'],
@@ -2945,7 +3001,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
 
                     mode = result['mode']
                     foundNZB, prov = search_init(
-                        comic['ComicName'],
+                        comicname,
                         result['Issue_Number'],
                         str(ComicYear),
                         SeriesYear,
@@ -2997,7 +3053,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                         'err': str(err),
                         'err_text': err_text,
                         'traceback': tracebackline,
-                        'comicname': comic['ComicName'],
+                        'comicname': comicname,
                         'issuenumber': result['Issue_Number'],
                         'seriesyear': SeriesYear,
                         'issueid': result['IssueID'],
@@ -3093,7 +3149,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                         'SELECT * FROM comics where ComicID=?', [ComicID]
                     ).fetchone()
                     if mode == 'want_ann':
-                        ComicName = result['ComicName']
+                        ComicName = result['ReleaseComicName']
                         Comicname_filesafe = None
                         AlternateSearch = None
                     else:
@@ -3251,6 +3307,7 @@ def searchIssueIDList(issuelist):
         )
     ):
         for issueid in issuelist:
+            comicname = None
             logger.info('searching for issueid: %s' % issueid)
             issue = myDB.selectone(
                 'SELECT * from issues WHERE IssueID=?', [issueid]
@@ -3260,12 +3317,22 @@ def searchIssueIDList(issuelist):
                     'SELECT * from annuals WHERE IssueID=? AND NOT Deleted', [issueid]
                 ).fetchone()
                 if issue is None:
-                    logger.warn(
-                        'Unable to determine IssueID - perhaps you need to'
-                        ' delete/refresh series? Skipping this entry: %s'
-                        % issueid
-                    )
-                    continue
+                    issue = myDB.selectone(
+                        'SELECT * from storyarcs WHERE IssueArcID=?', [issueid]
+                    ).fetchone()
+                    if issue is not None:
+                        comicname = issue['ComicName']
+                        logger.info('comicname : %s' % comicname)
+                        seriesyear = issue['SeriesYear']
+                        booktype = issue['Type']
+                        issuenumber = issue['IssueNumber']
+                    else:
+                        logger.warn(
+                            'Unable to determine IssueID - perhaps you need to'
+                            ' delete/refresh series? Skipping this entry: %s'
+                            % issueid
+                        )
+                        continue
 
             if any([issue['Status'] == 'Downloaded', issue['Status'] == 'Snatched']):
                 logger.fdebug(
@@ -3275,22 +3342,26 @@ def searchIssueIDList(issuelist):
                 )
                 continue
 
-            comic = myDB.selectone(
-                'SELECT * from comics WHERE ComicID=?', [issue['ComicID']]
-            ).fetchone()
-            SeriesYear = comic['ComicYear']
-            booktype = comic['Type']
-            if (
-                comic['Corrected_Type'] is not None
-                and comic['Type'] != comic['Corrected_Type']
-            ):
-                booktype = comic['Corrected_Type']
+            if comicname is None:
+                comic = myDB.selectone(
+                    'SELECT * from comics WHERE ComicID=?', [issue['ComicID']]
+                ).fetchone()
+                comicname = comic['ComicName']
+                seriesyear = comic['ComicYear']
+                booktype = comic['Type']
+                issuenumber = issue['Issue_Number']
+
+                if (
+                    comic['Corrected_Type'] is not None
+                    and comic['Type'] != comic['Corrected_Type']
+                ):
+                    booktype = comic['Corrected_Type']
 
             mylar.SEARCH_QUEUE.put(
                 {
-                    'comicname': comic['ComicName'],
-                    'seriesyear': SeriesYear,
-                    'issuenumber': issue['Issue_Number'],
+                    'comicname': comicname,
+                    'seriesyear': seriesyear,
+                    'issuenumber': issuenumber,
                     'issueid': issue['IssueID'],
                     'comicid': issue['ComicID'],
                     'booktype': booktype,
@@ -4079,6 +4150,7 @@ def searcher(
                     else:
                         send_to_nzbget['issueid'] = 'S' + IssueArcID
                     send_to_nzbget['apicall'] = True
+                    send_to_nzbget['download_info'] = {'provider': nzbprov, 'id': nzbid}
                     mylar.NZB_QUEUE.put(send_to_nzbget)
                 elif send_to_nzbget['status'] == 'double-pp':
                     return send_to_nzbget['status']
@@ -4262,6 +4334,7 @@ def searcher(
                     else:
                         sendtosab['issueid'] = 'S' + IssueArcID
                     sendtosab['apicall'] = True
+                    sendtosab['download_info'] = {'provider': nzbprov, 'id': nzbid}
                     logger.info('sendtosab: %s' % sendtosab)
                     mylar.NZB_QUEUE.put(sendtosab)
                 elif sendtosab['status'] == 'double-pp':

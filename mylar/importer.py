@@ -32,7 +32,7 @@ import requests
 import threading
 
 import mylar
-from mylar import logger, filers, helpers, db, mb, cv, parseit, filechecker, search, updater, moveit, comicbookdb
+from mylar import logger, filers, helpers, db, mb, cv, parseit, filechecker, search, updater, moveit, comicbookdb, series_metadata
 
 
 def is_exists(comicid):
@@ -241,8 +241,9 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
 
     if comlocation is None:
 
-        comic_values = {'ComicName':        comic['ComicName'], 
+        comic_values = {'ComicName':        comic['ComicName'],
                         'ComicPublisher':   comic['ComicPublisher'],
+                        'PublisherImprint': comic['PublisherImprint'],
                         'ComicYear':        SeriesYear,
                         'ComicVersion':     comicVol,
                         'Type':             comic['Type'],
@@ -299,18 +300,28 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
 
         #if the comic cover local is checked, save a cover.jpg to the series folder.
         if mylar.CONFIG.COMIC_COVER_LOCAL is True:
-            cloc_it = comlocation
+            cloc_it = []
             if comlocation is not None and all([os.path.isdir(comlocation) is True, os.path.isfile(os.path.join(comlocation, 'cover.jpg')) is False]):
-                cloc_it = comlocation
-            elif mylar.CONFIG.MULTIPLE_DEST_DIRS is not None and all([os.path.isdir(os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comlocation))) is True, os.path.isfile(os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comlocation), 'cover.jpg')) is False]):
-                cloc_it = os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comlocation))
-            try:
-                comiclocal = os.path.join(cloc_it, 'cover.jpg')
-                shutil.copyfile(cimage, comiclocal)
-                if mylar.CONFIG.ENFORCE_PERMS:
-                    filechecker.setperms(comiclocal)
-            except IOError as e:
-                logger.error('[%s] Unable to save cover (%s) into series directory (%s) at this time.' % (e, cimage, comiclocal))
+                cloc_it.append(comlocation)
+
+            if all([mylar.CONFIG.MULTIPLE_DEST_DIRS is not None, mylar.CONFIG.MULTIPLE_DEST_DIRS != 'None']):
+                if all([os.path.isdir(os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comlocation))) is True, os.path.isfile(os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comlocation), 'cover.jpg')) is False]):
+                    cloc_it.append(os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comlocation)))
+                else:
+                    ff = mylar.filers.FileHandlers(comic=comic)
+                    cloc = ff.secondary_folders(comlocation)
+                    if os.path.isfile(os.path.join(cloc, 'cover.jpg')) is False:
+                        cloc_it.append(cloc)
+
+            for clocit in cloc_it:
+                try:
+                    comiclocal = os.path.join(clocit, 'cover.jpg')
+                    shutil.copyfile(cimage, comiclocal)
+                    if mylar.CONFIG.ENFORCE_PERMS:
+                        filechecker.setperms(comiclocal)
+                except IOError as e:
+                    if 'No such file or directory' not in str(e):
+                        logger.error('[%s] Unable to save cover (%s) into series directory (%s) at this time.' % (e, cimage, comiclocal))
 
     else:
         ComicImage = None
@@ -353,7 +364,7 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
     logger.fdebug('comicIssues: %s' % comicIssues)
     logger.fdebug('seriesyear: %s / currentyear: %s' % (SeriesYear, helpers.today()[:4]))
     logger.fdebug('comicType: %s' % comic['Type'])
-    if all([int(comicIssues) == 1, SeriesYear < helpers.today()[:4], comic['Type'] != 'One-Shot', comic['Type'] != 'TPB']):
+    if all([int(comicIssues) == 1, SeriesYear < helpers.today()[:4], comic['Type'] != 'One-Shot', comic['Type'] != 'TPB', comic['Type'] != 'HC', comic['Type'] != 'GN']):
         logger.info('Determined to be a one-shot issue. Forcing Edition to One-Shot')
         booktype = 'One-Shot'
     else:
@@ -422,75 +433,6 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
     if issuedata is None:
         logger.warn('Unable to complete Refreshing / Adding issue data - this WILL create future problems if not addressed.')
         return {'status': 'incomplete'}
-    else:
-
-        #write out series.json here if enabled.
-        if mylar.CONFIG.SERIES_METADATA_LOCAL is True:
-            description_load = None
-            if os.path.exists(os.path.join(comlocation, 'series.json')):
-                try:
-                    with open(os.path.join(comlocation, 'series.json')) as j_file:
-                        metainfo = json.load(j_file)
-                        logger.info('metainfo_loaded: %s' % (metainfo,))
-                    description_load = metainfo['metadata'][0]['description']
-                except Exception as e:
-                    try:
-                        description_load = metainfo['metadata'][0]['description_formatted']
-                    except Exception as e:
-                        logger.info('No description found in metadata. Reloading from dB if available.[error: %s]' % e)
-
-            c_date = datetime.date(int(importantdates['LatestDate'][:4]), int(importantdates['LatestDate'][5:7]), 1)
-            n_date = datetime.date.today()
-            recentchk = (n_date - c_date).days
-            if importantdates['NewPublish'] is True:
-                seriesStatus = 'Continuing'
-            else:
-                #do this just incase and as an extra measure of accuracy hopefully.
-                if recentchk < 55:
-                    seriesStatus = 'Continuing'
-                else:
-                    seriesStatus = 'Ended'
-
-            clean_issue_list = None
-            if comic['Issue_List'] != 'None':
-                clean_issue_list = comic['Issue_List']
-
-            if description_load is not None:
-                cdes_removed = re.sub(r'\n', '', description_load).strip()
-                cdes_formatted = description_load
-            elif old_description is not None:
-                cdes_removed = re.sub(r'\n', ' ', old_description).strip()
-                cdes_formatted = old_description
-            else:
-                cdes_formatted = None # CV doesn't format their descriptions.
-
-            c_image = comic
-            metadata = {}
-            metadata['metadata'] = [(
-                                        {'type': 'comicSeries',
-                                         'publisher': comic['ComicPublisher'],
-                                         'imprint': comic['PublisherImprint'],
-                                         'name': comic['ComicName'],
-                                         'comicid': comicid,
-                                         'year': SeriesYear,
-                                         'description_text': cdes_removed,
-                                         'description_formatted': cdes_formatted,
-                                         'volume': comicVol,
-                                         'booktype': booktype,
-                                         'collects': clean_issue_list,
-                                         'ComicImage': comic.get('ComicImage', None),
-                                         'total_issues': comicIssues,
-                                         'publication_run': importantdates['ComicPublished'],
-                                         'status': seriesStatus}
-            )]
-
-            try:
-                with open(os.path.join(comlocation, 'series.json'), 'w', encoding='utf-8') as outfile:
-                    json.dump(metadata, outfile, indent=4, ensure_ascii=False)
-            except Exception as e:
-                logger.error('Unable to write series.json to %s. Error returned: %s' % (comlocation, e))
-            else:
-                logger.fdebug('Successfully written series.json file to %s' % comlocation)
 
     if any([calledfrom is None, calledfrom == 'maintenance']):
         issue_collection(issuedata, nostatus='False', serieslast_updated=serieslast_updated)
@@ -558,6 +500,12 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
     statbefore = myDB.selectone("SELECT Status FROM issues WHERE ComicID=? AND Int_IssueNumber=?", [comicid, helpers.issuedigits(latestiss)]).fetchone()
     logger.fdebug('issue: ' + latestiss + ' status before chk :' + str(statbefore['Status']))
     updater.forceRescan(comicid)
+
+    #series.json updater here (after all data written out)
+    if mylar.CONFIG.SERIES_METADATA_LOCAL is True:
+        sm = series_metadata.metadata_Series(comicid, bulk=False, api=False)
+        sm.update_metadata()
+
     statafter = myDB.selectone("SELECT Status FROM issues WHERE ComicID=? AND Int_IssueNumber=?", [comicid, helpers.issuedigits(latestiss)]).fetchone()
     logger.fdebug('issue: ' + latestiss + ' status after chk :' + str(statafter['Status']))
 
@@ -1535,7 +1483,7 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
         n_date = datetime.date.today()
         recentchk = (n_date - c_date).days
 
-        if recentchk <= 55:
+        if recentchk <= helpers.checkthepub(comicid):
             lastpubdate = 'Present'
         else:
             if ltmonth == '?':
@@ -1574,6 +1522,7 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
                     "ComicPublished":  publishfigure,
                     "NewPublish":      newpublish,
                     "LatestIssue":     latestiss,
+                    "intLatestIssue":  helpers.issuedigits(latestiss),
                     "LatestIssueID":   latestissueid,
                     "LatestDate":      latestdate,
                     "LastUpdated":     helpers.now()
@@ -1656,7 +1605,7 @@ def annual_check(ComicName, SeriesYear, comicid, issuetype, issuechk, annualslis
         if not sresults:
             return
 
-        annual_types_ignore = {'paperback', 'collecting', 'reprinting', 'reprints', 'collected edition', 'print edition', 'tpb', 'available in print', 'collects'}
+        annual_types_ignore = {'paperback', 'collecting', 'reprinting', 'reprints', 'collected edition', 'print edition', 'hardcover', 'hc', 'tpb', 'gn', 'graphic novel', 'available in print', 'collects'}
 
         if len(sresults) > 0:
             logger.fdebug('[IMPORTER-ANNUAL] - there are ' + str(len(sresults)) + ' results.')
@@ -1802,20 +1751,27 @@ def image_it(comicid, latestissueid, comlocation, ComicImage):
 
     #if the comic cover local is checked, save a cover.jpg to the series folder.
     if mylar.CONFIG.COMIC_COVER_LOCAL is True:
-        cloc_it = comlocation
+        cloc_it = []
         if (comlocation is not None and all([os.path.isdir(comlocation) is True, os.path.isfile(os.path.join(comlocation, 'cover.jpg')) is False])):
-            cloc_it = comlocation
-        elif (mylar.CONFIG.MULTIPLE_DEST_DIRS is not None and all([os.path.isdir(mylar.CONFIG.MULTIPLE_DEST_DIRS) is True, os.path.isfile(os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, 'cover.jpg')) is False])):
-            cloc_it = mylar.CONFIG.MULTIPLE_DEST_DIRS
-        try:
-            comiclocal = os.path.join(cloc_it, 'cover.jpg')
-            shutil.copyfile(cimage, comiclocal)
-            if mylar.CONFIG.ENFORCE_PERMS:
-                filechecker.setperms(comiclocal)
-        except IOError as e:
-            logger.error('[%s] Error saving cover (%s) into series directory (%s) at this time' % (e, cimage, comiclocal))
-        except Exception as e:
-            logger.error('[%s] Unable to save cover (%s) into series directory (%s) at this time' % (e, cimage, comiclocal))
+            cloc_it.append(comlocation)
+        elif all([mylar.CONFIG.MULTIPLE_DEST_DIRS is not None, mylar.CONFIG.MULTIPLE_DEST_DIRS != 'None']):
+            if all([os.path.isdir(os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comlocation))) is True, os.path.isfile(os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comlocation), 'cover.jpg')) is False]):
+                cloc_it.append(os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comlocation)))
+            else:
+                ff = mylar.filers.FileHandlers(ComicID=comicid)
+                cloc = ff.secondary_folders(comlocation)
+                if os.path.isfile(os.path.join(cloc, 'cover.jpg')) is False:
+                    cloc_it.append(cloc)
+
+        for clocit in cloc_it:
+            try:
+                comiclocal = os.path.join(clocit, 'cover.jpg')
+                shutil.copyfile(cimage, comiclocal)
+                if mylar.CONFIG.ENFORCE_PERMS:
+                    filechecker.setperms(comiclocal)
+            except IOError as e:
+                if 'No such file or directory' not in str(e):
+                    logger.error('[%s] Error saving cover (%s) into series directory (%s) at this time' % (e, cimage, comiclocal))
 
     myDB = db.DBConnection()
     myDB.upsert('comics', {'ComicImage': ComicImage}, {'ComicID': comicid})
