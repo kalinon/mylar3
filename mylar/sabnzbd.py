@@ -104,10 +104,17 @@ class SABnzbd(object):
                     #    logger.warn('Either disable Completed Download Handling for SABnzbd within Mylar, or remove ComicRN from your category script in SABnzbd.')
                     #    return {'status': 'double-pp', 'failed': False}
 
-                    #logger.fdebug('queue_params: %s' % self.params['queue'])
-                    queue_resp = requests.get(self.sab_url, params=self.params['queue'], verify=False)
-                    queueresp = queue_resp.json()
-                    queueinfo = queueresp['queue']
+                    logger.fdebug('queue_params: %s' % self.params['queue'])
+                    tmp_queue = self.params['queue']
+                    try:
+                        tmp_queue.pop('search')
+                    except Exception as e:
+                        logger.fdebug('unable to pop search term - possibly already done/finished/does not exist')
+                    tmp_queue['nzo_ids'] = self.params['nzo_id']
+                    #logger.fdebug('tmp_queue: %s' % (tmp_queue,))
+                    queue_resp = requests.get(self.sab_url, params=tmp_queue, verify=False)
+                    queueresponse = queue_resp.json()
+                    queueinfo = queueresponse['queue']
                     logger.fdebug('status: %s' % queueinfo['status'])
                     logger.fdebug('mbleft: %s' % queueinfo['mbleft'])
                     logger.fdebug('timeleft: %s' % queueinfo['timeleft'])
@@ -194,7 +201,10 @@ class SABnzbd(object):
                         tmp_path = os.path.abspath(os.path.join(hq['storage'], os.pardir))
                         tmp_path_b = tmp_path.split(os.path.sep)[:-1]
                         sub_dir = tmp_path.split(os.path.sep)[-1]
-                        rep_tmp_path_b = re.sub(os.path.sep.join(tmp_path_b), mylar.CONFIG.SAB_DIRECTORY, tmp_path).strip()
+                        if tmp_path == mylar.CONFIG.SAB_DIRECTORY:
+                            rep_tmp_path_b = mylar.CONFIG.SAB_DIRECTORY
+                        else:
+                            rep_tmp_path_b = re.sub(os.path.sep.join(tmp_path_b), mylar.CONFIG.SAB_DIRECTORY, tmp_path).strip()
 
                         try:
                             if os.path.exists(os.path.join( rep_tmp_path_b, os.path.sep.join(sub_dir), tmpfile )):

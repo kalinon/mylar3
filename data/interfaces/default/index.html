@@ -6,6 +6,7 @@
 %>
 
 <%def name="body()">
+        <input type="hidden" id="page_name" value="index" />
         <div class="table_wrapper">
 	<table class="display" id="series_table">
 	    <thead>
@@ -38,10 +39,14 @@
         function initThisPage() {
             initActions();
             $('#series_table').dataTable( {
+                "preDrawCallback": function (settings){
+                    pageScrollPos = $('#series_table div.datatables_scrollBody').scrollTop();
+                },
                 "sDom": '<"clear"f><"clear"lp><"clear">rt<"clear"ip>',
                 "processing": true,
                 "serverSide": true,
                 "ajaxSource": 'loadhome',
+                "destroy": true,
                 "columnDefs": [
                     {
                        "sortable": true,
@@ -50,7 +55,7 @@
                        "render":function (data,type,full) {
                            if (full[0]){
                                if (full[0].length > 20){
-                                   cb = '<span title="' + full[0] + '"></span>'+full[0].slice(0,20)+"...";
+                                   cb = '<span title="' + full[0] + '"></span>'+full[0].slice(0,17)+'...';
                                } else {
                                    cb = '<span title="' + full[0] + '"></span>'+full[0];
                                }
@@ -76,8 +81,8 @@
                             } else {
                                 bt = '';
                             }
-                            if (full[0]){
-                               if (full[0].length > 55){
+                            if (full[1]){
+                               if (full[1].length > 55){
                                  cn = full[1].slice(0,55)+"...";
                                } else {
                                  cn = full[1];
@@ -93,7 +98,30 @@
                        "targets": [ 3 ],
                        "visible": true,
                        "render":function (data,type,full) {
-                            return '# ' + full[3];
+                            if (full[3]){
+                               if (full[3].length == 5 || full[3].length == 6){
+                                 cn = full[3];
+                               } else if (full[3].length > 6){
+                                 cn = '<span title="#'+full[3]+'">#</span>';
+                               } else {
+                                 cn = '#' + full[3];
+                               }
+                               return cn;
+                            } else {
+                               return 'N/A';
+                            }
+                       }
+                    },
+                    {
+                       "sortable": true,
+                       "targets": [ 4 ],
+                       "visible": true,
+                       "render":function (data,type,full) {
+                           if (full[4].includes('Unknown')){
+                               return 'N/A';
+                           } else {
+                               return full[4];
+                           }
                        }
                     },
                     {
@@ -175,7 +203,7 @@
                  },
                  "drawCallback": function (o) {
                      // Jump to top of page
-                     $('html,body').scrollTop(0);
+                     $('#series_table div.dataTables_scrollBody').scrollTop(pageScrollPos);
                  },
                  "serverData": function ( sSource, aoData, fnCallback ) {
                             /* Add some extra data to the sender */
@@ -191,9 +219,6 @@
         $(document).ready(function(){
             initThisPage();
         });
-	$(window).load(function(){
-	    initFancybox();
-	});
 	</script>
 	
 </%def>

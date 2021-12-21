@@ -15,6 +15,7 @@
 </%def>
 
 <%def name="body()">
+        <input type="hidden" id="page_name" value="storyarcs_index" />
 	<div id="paddingheader">
 		<h1 class="clearfix"><img src="${icons['ReadingList-icon']}" height="26" width="26" alt="Reading List"/>Story Arc Management</h1>
 	</div>
@@ -124,7 +125,7 @@
                                   %>
 
                             <tr class="grade${grade}">
-                                <td id="storyarc"><a href="detailStoryArc?StoryArcID=${item['StoryArcID']}&StoryArcName=${item['StoryArc']}">${item['StoryArc']}</a></td>
+                                <td id="storyarc"><a href="detailStoryArc?StoryArcID=${item['StoryArcID']}&StoryArcName=${item['StoryArc']| u}">${item['StoryArc']}</a></td>
                                 <td id="years">${item['SpanYears']}</td>
                                 <td id="have"><span title="${item['percent']}"></span>${css}<div style="width:${item['percent']}%"><span class="progressbar-front-text">${item['Have']}/${item['Total']}</span></div></td>
                                 <td id="options">

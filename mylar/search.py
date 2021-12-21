@@ -65,7 +65,7 @@ def search_init(
     ComicVersion=None,
     SARC=None,
     IssueArcID=None,
-    mode=None,
+    smode=None,
     rsscheck=None,
     ComicID=None,
     manualsearch=None,
@@ -82,7 +82,7 @@ def search_init(
     mylar.COMICINFO = []
     unaltered_ComicName = None
     if filesafe:
-        if filesafe != ComicName and mode != 'want_ann':
+        if filesafe != ComicName and smode != 'want_ann':
             logger.info(
                 '[SEARCH] Special Characters exist within Series Title. Enabling'
                 ' search-safe Name : %s' % filesafe
@@ -112,9 +112,9 @@ def search_init(
     else:
         logger.fdebug('Issue Title not found. Setting to None.')
 
-    if mode == 'want_ann':
+    if smode == 'want_ann':
         logger.info('Annual/Special issue search detected. Appending to issue #')
-        # anything for mode other than None indicates an annual.
+        # anything for smode other than None indicates an annual.
         #if all(['annual' not in ComicName.lower(), 'special' not in ComicName.lower()]):
         #    ComicName = '%s Annual' % ComicName
         if '2021 annual' in ComicName.lower():
@@ -130,7 +130,7 @@ def search_init(
         ):
             AlternateSearch = '%s Annual' % AlternateSearch
 
-    if mode == 'pullwant' or IssueID is None:
+    if smode == 'pullwant' or IssueID is None:
         # one-off the download.
         logger.fdebug('One-Off Search parameters:')
         logger.fdebug('ComicName: %s' % ComicName)
@@ -468,6 +468,7 @@ def search_init(
                         booktype=booktype,
                         chktpb=chktpb,
                         ignore_booktype=ignore_booktype,
+                        smode=smode,
                     )
                     if findit['status'] is False:
                         if AlternateSearch is not None and AlternateSearch != "None":
@@ -510,6 +511,7 @@ def search_init(
                                     booktype=booktype,
                                     chktpb=chktpb,
                                     ignore_booktype=ignore_booktype,
+                                    smode=smode,
                                 )
                                 if findit['status'] is True:
                                     break
@@ -551,6 +553,7 @@ def search_init(
                         booktype=booktype,
                         chktpb=chktpb,
                         ignore_booktype=ignore_booktype,
+                        smode=smode,
                     )
                     if all(
                            [
@@ -606,6 +609,7 @@ def search_init(
                                     booktype=booktype,
                                     chktpb=chktpb,
                                     ignore_booktype=ignore_booktype,
+                                    smode=smode,
                                 )
                                 if findit['status'] is True:
                                     break
@@ -735,6 +739,7 @@ def NZB_SEARCH(
     booktype=None,
     chktpb=0,
     ignore_booktype=False,
+    smode=None
 ):
 
     if any([allow_packs == 1, allow_packs == '1']) and all(
@@ -747,17 +752,16 @@ def NZB_SEARCH(
     untouched_name = None
     if nzbprov == 'nzb.su':
         apikey = mylar.CONFIG.NZBSU_APIKEY
-        verify = bool(mylar.CONFIG.NZBSU_VERIFY)
+        verify = bool(int(mylar.CONFIG.NZBSU_VERIFY))
     elif nzbprov == 'dognzb':
         apikey = mylar.CONFIG.DOGNZB_APIKEY
-        verify = bool(mylar.CONFIG.DOGNZB_VERIFY)
+        verify = bool(int(mylar.CONFIG.DOGNZB_VERIFY))
     elif nzbprov == 'experimental':
         apikey = 'none'
-        verify = False
     elif nzbprov == 'torznab':
         name_torznab = torznab_host[0].rstrip()
         host_torznab = torznab_host[1].rstrip()
-        verify = bool(torznab_host[2])
+        verify = bool(int(torznab_host[2]))
         apikey = torznab_host[3].rstrip()
         category_torznab = torznab_host[4]
         if any([category_torznab is None, category_torznab == 'None']):
@@ -778,7 +782,7 @@ def NZB_SEARCH(
             name_newznab = name_newznab[:-10].strip()
             newznab_local = False
         apikey = newznab_host[3].rstrip()
-        verify = bool(newznab_host[2])
+        verify = bool(int(newznab_host[2]))
         if '#' in newznab_host[4].rstrip():
             catstart = newznab_host[4].find('#')
             category_newznab = re.sub('#', ',', newznab_host[4][catstart + 1 :]).strip()
@@ -1048,11 +1052,12 @@ def NZB_SEARCH(
                     )
                 elif nzbprov == 'newznab':
                     # let's make sure the host has a '/' at the end, if not add it.
-                    if host_newznab[len(host_newznab) - 1 : len(host_newznab)] != '/':
-                        host_newznab_fix = str(host_newznab) + "/"
-                    else:
-                        host_newznab_fix = host_newznab
-                    findurl = '%sapi?t=search&q=%s&o=xml&cat=%s' % (
+                    host_newznab_fix = host_newznab
+                    if not host_newznab_fix.endswith('api'):
+                        if not host_newznab_fix.endswith('/'):
+                            host_newznab_fix += '/'
+                        host_newznab_fix = urljoin(host_newznab_fix, 'api')
+                    findurl = '%s?t=search&q=%s&o=xml&cat=%s' % (
                         host_newznab_fix,
                         comsearch,
                         category_newznab,
@@ -2360,6 +2365,10 @@ def NZB_SEARCH(
                                 entry['title'] = entry['filename']
                             else:
                                 nzbid = generate_id(nzbprov, entry['link'])
+                                try:
+                                    entry['link'] = entry.enclosures[0]['url']
+                                except Exception:
+                                    pass
                             if all([manual is not True, alt_match is False]):
                                 downloadit = True
                             else:
@@ -2589,7 +2598,7 @@ def NZB_SEARCH(
                         oneoff=oneoff,
                     )
                     updater.foundsearch(
-                        ComicID, isid['issueid'], mode='series', provider=tmpprov
+                        ComicID, isid['issueid'], mode=smode, provider=tmpprov
                     )
                 notify_snatch(
                     sent_to,
@@ -2645,6 +2654,15 @@ def NZB_SEARCH(
                     alt_nzbname=alt_nzbname,
                     oneoff=oneoff,
                 )
+                updater.foundsearch(
+                    ComicID,
+                    IssueID,
+                    mode=smode, #'series',
+                    provider=tmpprov,
+                    SARC=SARC,
+                    IssueArcID=IssueArcID
+                )
+
             # send out the notifications for the snatch.
             if any([oneoff is True, IssueID is None]):
                 cyear = ComicYear
@@ -2982,24 +3000,25 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                     else:
                         DateAdded = result['DateAdded']
 
-                    if rsscheck is None and DateAdded >= mylar.SEARCH_TIER_DATE:
-                        logger.info(
-                            'adding: ComicID:%s  IssueiD: %s'
-                            % (result['ComicID'], result['IssueID'])
-                        )
-                        mylar.SEARCH_QUEUE.put(
-                            {
-                                'comicname': comicname,
-                                'seriesyear': SeriesYear,
-                                'issuenumber': result['Issue_Number'],
-                                'issueid': result['IssueID'],
-                                'comicid': result['ComicID'],
-                                'booktype': booktype,
-                            }
-                        )
+                    if rsscheck is None:
+                        if DateAdded >= mylar.SEARCH_TIER_DATE:
+                            logger.info(
+                                'adding: ComicID:%s  IssueiD: %s'
+                                % (result['ComicID'], result['IssueID'])
+                            )
+                            mylar.SEARCH_QUEUE.put(
+                                {
+                                    'comicname': comicname,
+                                    'seriesyear': SeriesYear,
+                                    'issuenumber': result['Issue_Number'],
+                                    'issueid': result['IssueID'],
+                                    'comicid': result['ComicID'],
+                                    'booktype': booktype,
+                                }
+                            )
                         continue
 
-                    mode = result['mode']
+                    smode = result['mode']
                     foundNZB, prov = search_init(
                         comicname,
                         result['Issue_Number'],
@@ -3014,7 +3033,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                         ComicVersion,
                         SARC=result['SARC'],
                         IssueArcID=result['IssueArcID'],
-                        mode=mode,
+                        smode=smode,
                         rsscheck=rsscheck,
                         ComicID=result['ComicID'],
                         filesafe=Comicname_filesafe,
@@ -3029,7 +3048,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                         updater.foundsearch(
                             result['ComicID'],
                             result['IssueID'],
-                            mode=mode,
+                            mode=smode,
                             provider=prov,
                             SARC=result['SARC'],
                             IssueArcID=result['IssueArcID'],
@@ -3058,7 +3077,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                         'seriesyear': SeriesYear,
                         'issueid': result['IssueID'],
                         'comicid': result['ComicID'],
-                        'mode': mode,
+                        'smode': smode,
                         'booktype': booktype,
                     }
 
@@ -3079,24 +3098,24 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                 result = myDB.selectone(
                     'SELECT * FROM issues where IssueID=?', [issueid]
                 ).fetchone()
-                mode = 'want'
+                smode = 'want'
                 oneoff = False
                 if result is None:
                     result = myDB.selectone(
                         'SELECT * FROM annuals where IssueID=? AND NOT Deleted', [issueid]
                     ).fetchone()
-                    mode = 'want_ann'
+                    smode = 'want_ann'
                     if result is None:
                         result = myDB.selectone(
                             'SELECT * FROM storyarcs where IssueArcID=?', [issueid]
                         ).fetchone()
-                        mode = 'story_arc'
+                        smode = 'story_arc'
                         oneoff = True
                         if result is None:
                             result = myDB.selectone(
                                 'SELECT * FROM weekly where IssueID=?', [issueid]
                             ).fetchone()
-                            mode = 'pullwant'
+                            smode = 'pullwant'
                             oneoff = True
                             if result is None:
                                 logger.fdebug(
@@ -3108,7 +3127,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
 
                 allow_packs = False
                 ComicID = result['ComicID']
-                if mode == 'story_arc':
+                if smode == 'story_arc':
                     ComicName = result['ComicName']
                     Comicname_filesafe = helpers.filesafe(ComicName)
                     SeriesYear = result['SeriesYear']
@@ -3119,14 +3138,14 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                     ComicVersion = result['Volume']
                     SARC = result['StoryArc']
                     IssueArcID = issueid
-                    actissueid = None
+                    actissueid = result['IssueID'] #None
                     IssueDate = result['IssueDate']
                     StoreDate = result['ReleaseDate']
                     DigitalDate = result['DigitalDate']
                     TorrentID_32p = None
                     booktype = result['Type']
                     ignore_booktype = False
-                elif mode == 'pullwant':
+                elif smode == 'pullwant':
                     ComicName = result['COMIC']
                     Comicname_filesafe = helpers.filesafe(ComicName)
                     SeriesYear = result['seriesyear']
@@ -3148,7 +3167,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                     comic = myDB.selectone(
                         'SELECT * FROM comics where ComicID=?', [ComicID]
                     ).fetchone()
-                    if mode == 'want_ann':
+                    if smode == 'want_ann':
                         ComicName = result['ReleaseComicName']
                         Comicname_filesafe = None
                         AlternateSearch = None
@@ -3197,7 +3216,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                     ComicVersion,
                     SARC=SARC,
                     IssueArcID=IssueArcID,
-                    mode=mode,
+                    smode=smode,
                     rsscheck=rsscheck,
                     ComicID=ComicID,
                     filesafe=Comicname_filesafe,
@@ -3218,7 +3237,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                     updater.foundsearch(
                         ComicID,
                         actissueid,
-                        mode=mode,
+                        mode=smode,
                         provider=prov,
                         SARC=SARC,
                         IssueArcID=IssueArcID,
@@ -3248,7 +3267,7 @@ def searchforissue(issueid=None, new=False, rsscheck=None, manual=False):
                     'seriesyear': SeriesYear,
                     'issueid': result['IssueID'],
                     'comicid': result['ComicID'],
-                    'mode': mode,
+                    'smode': smode,
                     'booktype': booktype,
                 }
 
@@ -3308,7 +3327,6 @@ def searchIssueIDList(issuelist):
     ):
         for issueid in issuelist:
             comicname = None
-            logger.info('searching for issueid: %s' % issueid)
             issue = myDB.selectone(
                 'SELECT * from issues WHERE IssueID=?', [issueid]
             ).fetchone()
@@ -3322,7 +3340,6 @@ def searchIssueIDList(issuelist):
                     ).fetchone()
                     if issue is not None:
                         comicname = issue['ComicName']
-                        logger.info('comicname : %s' % comicname)
                         seriesyear = issue['SeriesYear']
                         booktype = issue['Type']
                         issuenumber = issue['IssueNumber']
@@ -3362,7 +3379,7 @@ def searchIssueIDList(issuelist):
                     'comicname': comicname,
                     'seriesyear': seriesyear,
                     'issuenumber': issuenumber,
-                    'issueid': issue['IssueID'],
+                    'issueid': issue['IssueID'], #issueid,
                     'comicid': issue['ComicID'],
                     'booktype': booktype,
                 }
@@ -3374,7 +3391,6 @@ def searchIssueIDList(issuelist):
             'There are no search providers enabled atm - not performing the requested'
             ' search for obvious reasons'
         )
-
 
 def provider_sequence(
     nzbprovider, torprovider, newznab_hosts, torznab_hosts, ddlprovider
@@ -3516,7 +3532,7 @@ def nzbname_create(provider, title=None, info=None):
         # let's change all space to decimals for simplicity
         logger.fdebug('[SEARCHER] entry[title]: %s' % title)
         # gotta replace & or escape it
-        nzbname = re.sub(r'\&amp;(amp;)?|\&', 'and', title)
+        nzbname = re.sub(r'\&amp;|(amp;)|amp;|\&', 'and', title)
         nzbname = re.sub(r'[\,\:\?\'\+]', '', nzbname)
         nzbname = re.sub(r'[\(\)]', ' ', nzbname)
         logger.fdebug('[SEARCHER] nzbname (remove chars): %s' % nzbname)
@@ -3722,11 +3738,11 @@ def searcher(
                         payload = {'r': str(apikey)}
                         if uid is not None:
                             payload['i'] = uid
-                    verify = bool(newznab[2])
+                    verify = bool(int(newznab[2]))
             else:
                 down_url = 'https://api.nzb.su/api'
                 apikey = mylar.CONFIG.NZBSU_APIKEY
-                verify = bool(mylar.CONFIG.NZBSU_VERIFY)
+                verify = bool(int(mylar.CONFIG.NZBSU_VERIFY))
 
             if nzbhydra is True:
                 down_url = link
@@ -3743,13 +3759,13 @@ def searcher(
         elif nzbprov == 'dognzb':
             # dognzb - need to add back in the dog apikey
             down_url = urljoin(link, str(mylar.CONFIG.DOGNZB_APIKEY))
-            verify = bool(mylar.CONFIG.DOGNZB_VERIFY)
+            verify = bool(int(mylar.CONFIG.DOGNZB_VERIFY))
 
         else:
             # experimental - direct link.
             down_url = link
             headers = None
-            verify = False
+            verify = True
 
         if payload is None:
             tmp_line = down_url

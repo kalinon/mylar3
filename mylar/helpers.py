@@ -34,6 +34,7 @@ import hashlib
 import gzip
 import os, errno
 import urllib
+from urllib.parse import urljoin
 from io import StringIO
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -991,6 +992,14 @@ def issuedigits(issnum):
                     int_issnum = (int(issnum[:-3]) * 1000) + ord('n') + ord('o') + ord('w')
                 else:
                     int_issnum = (int(issnum[:-4]) * 1000) + ord('n') + ord('o') + ord('w')
+            elif 'bey' in issnum.lower():
+                remdec = issnum.find('.')  #find the decimal position.
+                if remdec == -1:
+                #if no decimal, it's all one string
+                #remove the last 3 characters from the issue # (BEY)
+                    int_issnum = (int(issnum[:-3]) * 1000) + ord('b') + ord('e') + ord('y')
+                else:
+                    int_issnum = (int(issnum[:-4]) * 1000) + ord('b') + ord('e') + ord('y')
             elif 'mu' in issnum.lower():
                 remdec = issnum.find('.')
                 if remdec == -1:
@@ -1444,26 +1453,29 @@ def havetotals(refreshit=None):
             elif comic['ForceContinuing'] == 1:
                 recentstatus = 'Continuing'
             elif 'present' in comic['ComicPublished'].lower() or (today()[:4] in comic['LatestDate']):
-                latestdate = comic['LatestDate']
-                #pull-list f'd up the date by putting '15' instead of '2015' causing 500 server errors
-                if '-' in latestdate[:3]:
-                    st_date = latestdate.find('-')
-                    st_remainder = latestdate[st_date+1:]
-                    st_year = latestdate[:st_date]
-                    year = '20' + st_year
-                    latestdate = str(year) + '-' + str(st_remainder)
-                    #logger.fdebug('year set to: ' + latestdate)
-                c_date = datetime.date(int(latestdate[:4]), int(latestdate[5:7]), 1)
-                n_date = datetime.date.today()
-                recentchk = (n_date - c_date).days
-                if comic['NewPublish'] is True:
-                    recentstatus = 'Continuing'
+                if 'Err' in comic['LatestDate']:
+                    recentstatus = 'Loading'
                 else:
-                    #do this just incase and as an extra measure of accuracy hopefully.
-                    if recentchk < 55:
+                    latestdate = comic['LatestDate']
+                    #pull-list f'd up the date by putting '15' instead of '2015' causing 500 server errors
+                    if '-' in latestdate[:3]:
+                        st_date = latestdate.find('-')
+                        st_remainder = latestdate[st_date+1:]
+                        st_year = latestdate[:st_date]
+                        year = '20' + st_year
+                        latestdate = str(year) + '-' + str(st_remainder)
+                        #logger.fdebug('year set to: ' + latestdate)
+                    c_date = datetime.date(int(latestdate[:4]), int(latestdate[5:7]), 1)
+                    n_date = datetime.date.today()
+                    recentchk = (n_date - c_date).days
+                    if comic['NewPublish'] is True:
                         recentstatus = 'Continuing'
                     else:
-                        recentstatus = 'Ended'
+                        #do this just incase and as an extra measure of accuracy hopefully.
+                        if recentchk < 55:
+                            recentstatus = 'Continuing'
+                        else:
+                            recentstatus = 'Ended'
             else:
                 recentstatus = 'Ended'
 
@@ -1547,18 +1559,21 @@ def IssueDetails(filelocation, IssueID=None, justinfo=False, comicname=None):
 
     issuedetails = []
     issuetag = None
-    if filelocation == 'None':
+    if any([filelocation == 'None', filelocation is None]):
         issue_data = mylar.cv.getComic(None, 'single_issue', IssueID)
         IssueImage = getimage.retrieve_image(issue_data['image'])
-        return {'metadata': issue_data, 'datamode': 'single_issue', 'IssueImage': IssueImage }
-    else:
-        filelocation = urllib.parse.unquote_plus(filelocation)
+        metadata_info = {'metadata_source': 'ComicVine',
+                         'metadata_type': None}
+        return {'metadata': issue_data, 'datamode': 'single_issue', 'IssueImage': IssueImage, 'metadata_source': metadata_info }
+    #else:
+    #    filelocation = urllib.parse.unquote_plus(filelocation)
     if justinfo is False:
         file_info = getimage.extract_image(filelocation, single=True, imquality='issue', comicname=comicname)
         IssueImage = file_info['ComicImage']
         data = file_info['metadata']
         if data:
             issuetag = 'xml'
+            metadata_type = 'comicinfo.xml'
     else:
         IssueImage = "None"
         try:
@@ -1568,10 +1583,13 @@ def IssueDetails(filelocation, IssueID=None, justinfo=False, comicname=None):
                         logger.fdebug('Found ComicInfo.xml - now retrieving information.')
                         data = inzipfile.read(infile)
                         issuetag = 'xml'
+                        metadata_type = 'comicinfo.xml'
                         break
         except:
+            metadata_info = {'metadata_source': None,
+                             'metadata_type': None}
             logger.info('ERROR. Unable to properly retrieve the cover for displaying. It\'s probably best to re-tag this file.')
-            return {'IssueImage': IssueImage, 'datamode': 'file', 'metadata': None}
+            return {'IssueImage': IssueImage, 'datamode': 'file', 'metadata': None, 'metadata_source': metadata_info}
 
 
     if issuetag is None:
@@ -1580,14 +1598,21 @@ def IssueDetails(filelocation, IssueID=None, justinfo=False, comicname=None):
             dz = zipfile.ZipFile(filelocation, 'r')
             data = dz.comment
         except:
+            metadata_info = {'metadata_source': 'ComicVine',
+                             'metadata_type': None}
             logger.warn('Unable to extract any metadata from within file.')
-            return {'IssueImage': IssueImage, 'datamode': 'file', 'metadata': None}
+            return {'IssueImage': IssueImage, 'datamode': 'file', 'metadata': None, 'metadata_source': metadata_info}
         else:
             if data:
                 issuetag = 'comment'
+                metadata_info = {'metadata_source': 'ComicVine',
+                                 'metadata_type': 'comicbooklover'}
+
             else:
+                metadata_info = {'metadata_source': None,
+                                  'metadata_type': None}
                 logger.warn('No metadata available in zipfile comment field.')
-                return {'IssueImage': IssueImage, 'datamode': 'file', 'metadata': None}
+                return {'IssueImage': IssueImage, 'datamode': 'file', 'metadata': None, 'metadata_source': metadata_info}
 
     logger.info('Tag returned as being: ' + str(issuetag))
 
@@ -1596,6 +1621,9 @@ def IssueDetails(filelocation, IssueID=None, justinfo=False, comicname=None):
         dom = parseString(data)
 
         results = dom.getElementsByTagName('ComicInfo')
+        metadata_info = {'metadata_source': None,
+                         'metadata_type': 'comicinfo.xml'}
+
         for result in results:
             try:
                 issue_title = result.getElementsByTagName('Title')[0].firstChild.wholeText
@@ -1627,6 +1655,15 @@ def IssueDetails(filelocation, IssueID=None, justinfo=False, comicname=None):
                 notes = result.getElementsByTagName('Notes')[0].firstChild.wholeText  #IssueID is in here
             except:
                 notes = "None"
+            else:
+                if 'CMXID' in notes:
+                    mtype = 'Comixology'
+                elif any(['cvdb' in notes.lower(), 'issue id' in notes.lower(), 'comic vine' in notes.lower()]):
+                    mtype = 'ComicVine'
+                else:
+                    mtype = None
+                metadata_info = {'metadata_source': mtype,
+                                 'metadata_type': 'comicinfo.xml'}
             try:
                 year = result.getElementsByTagName('Year')[0].firstChild.wholeText
             except:
@@ -1642,31 +1679,31 @@ def IssueDetails(filelocation, IssueID=None, justinfo=False, comicname=None):
             try:
                 writer = result.getElementsByTagName('Writer')[0].firstChild.wholeText
             except:
-                writer = "None"
+                writer = None
             try:
                 penciller = result.getElementsByTagName('Penciller')[0].firstChild.wholeText
             except:
-                penciller = "None"
+                penciller = None
             try:
                 inker = result.getElementsByTagName('Inker')[0].firstChild.wholeText
             except:
-                inker = "None"
+                inker = None
             try:
                 colorist = result.getElementsByTagName('Colorist')[0].firstChild.wholeText
             except:
-                colorist = "None"
+                colorist = None
             try:
                 letterer = result.getElementsByTagName('Letterer')[0].firstChild.wholeText
             except:
-                letterer = "None"
+                letterer = None
             try:
                 cover_artist = result.getElementsByTagName('CoverArtist')[0].firstChild.wholeText
             except:
-                cover_artist = "None"
+                cover_artist = None
             try:
                 editor = result.getElementsByTagName('Editor')[0].firstChild.wholeText
             except:
-                editor = "None"
+                editor = None
             try:
                 publisher = result.getElementsByTagName('Publisher')[0].firstChild.wholeText
             except:
@@ -1745,14 +1782,14 @@ def IssueDetails(filelocation, IssueID=None, justinfo=False, comicname=None):
         except:
             summary = "None"
 
-        editor = "None"
-        colorist = "None"
-        artist = "None"
+        editor = None
+        colorist = None
+        artist = None
         writer = None
-        letterer = "None"
-        cover_artist = "None"
-        penciller = "None"
-        inker = "None"
+        letterer = None
+        cover_artist = None
+        penciller = None
+        inker = None
 
         try:
             series_volume = dt['volume']
@@ -1762,15 +1799,7 @@ def IssueDetails(filelocation, IssueID=None, justinfo=False, comicname=None):
         try:
             t = dt['credits']
         except:
-            editor = None
-            colorist = None
-            artist = None
-            writer = None
-            letterer = None
-            cover_artist = None
-            penciller = None
-            inker = None
-
+            pass
         else:
             for cl in dt['credits']:
                 if cl['role'] == 'Editor':
@@ -1835,7 +1864,8 @@ def IssueDetails(filelocation, IssueID=None, justinfo=False, comicname=None):
              "webpage":      webpage,
              "pagecount":    pagecount},
              "IssueImage":   IssueImage,
-             "datamode":     'file'}
+             "datamode":     'file',
+             "metadata_source": metadata_info}
 
 def get_issue_title(IssueID=None, ComicID=None, IssueNumber=None, IssueArcID=None):
     #import db
@@ -2447,7 +2477,7 @@ def crc(filename):
     except UnicodeEncodeError:
        filename = "invalid"
        filename = filename.encode(mylar.SYS_ENCODING)
-    
+
     return hashlib.md5(filename).hexdigest()
 
 def issue_find_ids(ComicName, ComicID, pack, IssueNumber):
@@ -3224,11 +3254,29 @@ def search_queue(queue):
 
             logger.info('[SEARCH-QUEUE] Now loading item from search queue: %s' % item)
             if mylar.SEARCHLOCK is False:
-                try:
+                arcid = None
+                comicid = item['comicid']
+                issueid = item['issueid']
+                if issueid is not None:
+                    if '_' in issueid:
+                        arcid = issueid
+                        comicid = None # required for storyarcs to work
+                        issueid = None # required for storyarcs to work
+                mofo = mylar.filers.FileHandlers(ComicID=comicid, IssueID=issueid, arcID=arcid)
+                local_check = mofo.walk_the_walk()
+                if local_check['status'] is True:
+                    mylar.PP_QUEUE.put({'nzb_name':     local_check['filename'],
+                                        'nzb_folder':   local_check['filepath'],
+                                        'failed':       False,
+                                        'issueid':      item['issueid'],
+                                        'comicid':      item['comicid'],
+                                        'apicall':      True,
+                                        'ddl':          False,
+                                        'download_info': None})
+                else:
                     ss_queue = mylar.search.searchforissue(item['issueid'])
-                    time.sleep(5) #arbitrary sleep to let the process attempt to finish pp'ing
-                except Exception as e:
-                    logger.error(e)
+                time.sleep(5) #arbitrary sleep to let the process attempt to finish pp'ing
+
             if mylar.SEARCHLOCK is True:
                 logger.fdebug('[SEARCH-QUEUE] Another item is currently being searched....')
                 time.sleep(15)
@@ -3556,7 +3604,10 @@ def job_management(write=False, job=None, last_run_completed=None, current_run=N
             weekly_nextrun = None
             search_newstatus = 'Waiting'
             search_nextrun = None
-            version_newstatus = 'Waiting'
+            if mylar.CONFIG.CHECK_GITHUB is True:
+               version_newstatus = 'Waiting'
+            else:
+               version_newstatus = 'Paused'
             version_nextrun = None
             if mylar.CONFIG.ENABLE_CHECK_FOLDER is True:
                 monitor_newstatus = 'Waiting'
@@ -3571,37 +3622,37 @@ def job_management(write=False, job=None, last_run_completed=None, current_run=N
                     if mylar.SCHED_DBUPDATE_LAST is None:
                         mylar.SCHED_DBUPDATE_LAST = ji['prev_run_timestamp']
                     dbupdate_newstatus = ji['status']
-                    mylar.UPDATER_STATUS = dbupdate_newstatus
+                    #mylar.UPDATER_STATUS = dbupdate_newstatus
                     dbupdate_nextrun = ji['next_run_timestamp']
                 elif 'search' in ji['JobName'].lower():
                     if mylar.SCHED_SEARCH_LAST is None:
                         mylar.SCHED_SEARCH_LAST = ji['prev_run_timestamp']
                     search_newstatus = ji['status']
-                    mylar.SEARCH_STATUS = search_newstatus
+                    #mylar.SEARCH_STATUS = search_newstatus
                     search_nextrun = ji['next_run_timestamp']
                 elif 'rss' in ji['JobName'].lower():
                     if mylar.SCHED_RSS_LAST is None:
                         mylar.SCHED_RSS_LAST = ji['prev_run_timestamp']
                     rss_newstatus = ji['status']
-                    mylar.RSS_STATUS = rss_newstatus
+                    #mylar.RSS_STATUS = rss_newstatus
                     rss_nextrun = ji['next_run_timestamp']
                 elif 'weekly' in ji['JobName'].lower():
                     if mylar.SCHED_WEEKLY_LAST is None:
                         mylar.SCHED_WEEKLY_LAST = ji['prev_run_timestamp']
                     weekly_newstatus = ji['status']
-                    mylar.WEEKLY_STATUS = weekly_newstatus
+                    #mylar.WEEKLY_STATUS = weekly_newstatus
                     weekly_nextrun = ji['next_run_timestamp']
                 elif 'version' in ji['JobName'].lower():
                     if mylar.SCHED_VERSION_LAST is None:
                         mylar.SCHED_VERSION_LAST = ji['prev_run_timestamp']
                     version_newstatus = ji['status']
-                    mylar.VERSION_STATUS = version_newstatus
+                    #mylar.VERSION_STATUS = version_newstatus
                     version_nextrun = ji['next_run_timestamp']
                 elif 'monitor' in ji['JobName'].lower():
                     if mylar.SCHED_MONITOR_LAST is None:
                         mylar.SCHED_MONITOR_LAST = ji['prev_run_timestamp']
                     monitor_newstatus = ji['status']
-                    mylar.MONITOR_STATUS = monitor_newstatus
+                    #mylar.MONITOR_STATUS = monitor_newstatus
                     monitor_nextrun = ji['next_run_timestamp']
 
             monitors = {'weekly': mylar.SCHED_WEEKLY_LAST,
@@ -3619,28 +3670,34 @@ def job_management(write=False, job=None, last_run_completed=None, current_run=N
                     continue
                 elif 'update' in jobinfo.lower():
                     prev_run_timestamp = mylar.SCHED_DBUPDATE_LAST
-                    newstatus = dbupdate_newstatus
-                    mylar.UPDATER_STATUS = newstatus
+                    newstatus = mylar.UPDATER_STATUS
+                    #newstatus = dbupdate_newstatus
+                    #mylar.UPDATER_STATUS = newstatus
                 elif 'search' in jobinfo.lower():
                     prev_run_timestamp = mylar.SCHED_SEARCH_LAST
-                    newstatus = search_newstatus
-                    mylar.SEARCH_STATUS = newstatus
+                    newstatus = mylar.SEARCH_STATUS
+                    #newstatus = search_newstatus
+                    #mylar.SEARCH_STATUS = newstatus
                 elif 'rss' in jobinfo.lower():
                     prev_run_timestamp = mylar.SCHED_RSS_LAST
-                    newstatus = rss_newstatus
-                    mylar.RSS_STATUS = newstatus
+                    newstatus = mylar.RSS_STATUS
+                    #newstatus = rss_newstatus
+                    #mylar.RSS_STATUS = newstatus
                 elif 'weekly' in jobinfo.lower():
                     prev_run_timestamp = mylar.SCHED_WEEKLY_LAST
-                    newstatus = weekly_newstatus
-                    mylar.WEEKLY_STATUS = newstatus
+                    newstatus = mylar.WEEKLY_STATUS
+                    #newstatus = weekly_newstatus
+                    #mylar.WEEKLY_STATUS = newstatus
                 elif 'version' in jobinfo.lower():
                     prev_run_timestamp = mylar.SCHED_VERSION_LAST
-                    newstatus = version_newstatus
-                    mylar.VERSION_STATUS = newstatus
+                    newstatus = mylar.VERSION_STATUS
+                    #newstatus = version_newstatus
+                    #mylar.VERSION_STATUS = newstatus
                 elif 'monitor' in jobinfo.lower():
                     prev_run_timestamp = mylar.SCHED_MONITOR_LAST
-                    newstatus = monitor_newstatus
-                    mylar.MONITOR_STATUS = newstatus
+                    newstatus = mylar.MONITOR_STATUS
+                    #newstatus = monitor_newstatus
+                    #mylar.MONITOR_STATUS = newstatus
 
                 jobname = jobinfo[:jobinfo.find('(')-1].strip()
                 #logger.fdebug('jobinfo: %s' % jobinfo)
@@ -3780,10 +3837,11 @@ def newznab_test(name, host, ssl, apikey):
               'apikey':  apikey,
               'o':       'xml'}
 
-    if host[:-1] == '/':
-        host = host + 'api'
-    else:
-        host = host + '/api'
+    if not host.endswith('api'):
+        if not host.endswith('/'):
+            host += '/'
+        host = urljoin(host, 'api')
+        logger.fdebug('[TEST-NEWZNAB] Appending `api` to end of host: %s' % host)
     headers = {'User-Agent': str(mylar.USER_AGENT)}
     logger.info('host: %s' % host)
     try:
@@ -4180,6 +4238,11 @@ def publisherImages(publisher):
                           'publisher_image_alt':   'Wildstorm',
                           'publisher_imageH':      '75',
                           'publisher_imageW':      '75'}
+    elif publisher == 'AWA Studios':
+        comicpublisher = {'publisher_image':       'images/publisherlogos/logo-awa.png',
+                          'publisher_image_alt':   'AWA Studios',
+                          'publisher_imageH':      '75',
+                          'publisher_imageW':      '125'}
     else:
         comicpublisher = {'publisher_image':       None,
                           'publisher_image_alt':   'Nope',

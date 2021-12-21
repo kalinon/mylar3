@@ -28,6 +28,7 @@
 	</div>
 </%def>
 <%def name="body()">
+        <input type="hidden" id="page_name" value="config" />
 
         <%
              mylar.DONATEBUTTON = False
@@ -87,7 +88,11 @@
                             by buying me a coffee (or several)</strong></label></br></br>
                          </div>
                          <div style="width: 60%; margin: 0px auto;" align="center">
-                            <a id="navDonate" href="https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&amp;hosted_button_id=EWQADB5AMVRFU" rel="noreferrer" onclick="window.open('http://dereferer.org/?' + this.href); return false;"><img src="https://www.paypalobjects.com/en_US/i/btn/btn_donate_SM.gif" alt="[donate]" /></a>
+                            <%
+                                   pline = "https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&amp;hosted_button_id=EWQADB5AMVRFU"
+                                   bline = 'data:text/html;charset=utf-8, <html><meta http-equiv="refresh" content="0;URL=&#39;${pline}&#39;"></html>'
+                            %>
+                            <a id="navDonate" rel="noreferrer" onclick="window.open('${pline}');return false" href='${bline}'><img src="https://www.paypalobjects.com/en_US/i/btn/btn_donate_SM.gif" alt="[donate]" /></a>
                             <a href="#" onclick="javascript:window.prompt('Please copy/paste my Bitcoin address into your Bitcoin client.', '18eCE9wZxnNiZgE4Cc5pwJMnMjEfhdmH4U');"><img src="images/bitcoin.png" alt="Bitcoin" height="20" align="center"></a></div>
                          </div>
                    </fieldset>
@@ -251,15 +256,13 @@
                     		 </fieldset>
                          <fieldset>
                              <legend>Annual Handling</legend>
-                                <div>
-                                    <small class="heading"><span style="float: left; margin-right: .3em; margin-top: 4px;" class="ui-icon ui-icon-info"></span>Series need to be Refreshed for annuals to appear</small>
-                                </div>
                              <div class="row checkbox">
-                                 <input type="checkbox" name="annuals_on" value="1" ${config['annuals_on']} /><label>Enable Series-Annual Integration</label>
+                                 <input type="checkbox" name="annuals_on" id="annuals_on" value="1" ${config['annuals_on']} /><label>Enable Series-Annual Integration</label>
                              </div>
-                                 </br><small>Enabled: Annuals are tracked as part of the series it belongs to</small></br>
-                                 <small>Disabled: Annuals are tracked independently and will appear on your watchlist as a series</small>
                          </fieldset>
+                             <div style="text-align:center;">
+                                 <span id="annuals_info" style="display:none;text-align:center;"></span>
+                             </div>
             	</td>
 
                 <td>          
@@ -435,40 +438,28 @@
                                                 %endfor
                                                 </select>
                                 </div>
+                                </br>
 
-                                <div class="row checkbox left clearfix">
-                                    <input id="sab_to_mylar" type="checkbox" onclick="initConfigCheckbox($(this));" name="sab_to_mylar" value="1" ${config['sab_to_mylar']} /><label>Are Mylar / SABnzbd on separate machines</label>
-                                    <small class="heading"><span style="float: left; margin-right: .3em; margin-top: 4px;" class="ui-icon ui-icon-info"></span>This is *ONLY* required if Mylar and SABnzbd are on separate machines, otherwise don't touch it</small>
+                               <div class="row checkbox left clearfix">
+                                    <input type="checkbox" id="sab_client_post_processing" name="sab_client_post_processing" value="1" ${config['sab_client_post_processing']} /><label>Enable Completed Download Handling</label>
                                 </div>
-                                <div class="config">
-                                    <div class="row">
-                                        <label>SABnzbd Download Directory</label>
-                                        <input type="text" name="sab_directory" value="${config['sab_directory']}" size="36" />
-                                        <small>Where your SAB downloads go (required for PP)</small>
+
+                                <div class="row">
+                                    <div class="row checkbox left clearfix">
+                                       <input id="sab_to_mylar" type="checkbox" name="sab_to_mylar" onClick="initConfigCheckbox($(this));" value="1" ${config['sab_to_mylar']} /><label>Are Mylar / SABnzbd on separate machines</label>
                                     </div>
-                                </div>
-
-                                <div class="row checkbox left clearfix" id="sab_cdh" style="display:unset;">
-                                    <input type="checkbox" id="sab_client_post_processing" onclick="initConfigCheckbox($(this));" name="sab_client_post_processing" value="1" ${config['sab_client_post_processing']} /><label>Enable Completed Download Handling</label>
-                                    <div id="sabcompletedinfo">
+                                    <div class="config">
                                        <div class="row">
-                                           <small class="heading"><span style="float: left; margin-right: .3em; margin-top: 4px;" class="ui-icon ui-icon-info"></span>
-                                           ComicRN script cannot be used with this enabled & required SAB version > 0.8.0</small>
+                                          <label>SABnzbd Download Directory</label>
+                                          <input type="text" name="sab_directory" value="${config['sab_directory']}" size="36">
                                        </div>
                                     </div>
                                 </div>
-                                <div class="row checkbox left clearfix" id="sab_nocdh" style="display:none;">
-                                    <div>
-                                       <div class="row">
-                                           <small class="heading"><span style="float: left; margin-right: .3em; margin-top: 4px;" class="ui-icon ui-icon-info"></span>
-                                           Completed Download Handling is not available as your version of SABnzbd is not above 0.8.0</small>
-                                       </div>
-                                    </div>
-                                </div>
+                                </br>
                                 <div align="center" class="row">
                                      <img name="sabnzbd_statusicon" id="sabnzbd_statusicon" src="images/success.png" style="float:right;visibility:hidden;" height="20" width="20" />
                                      <input type="button" value="Test SABnzbd" id="test_sab" style="float:center" /></br>
-                                     <input type="text" name="sabstatus" style="text-align:center; font-size:11px;" id="sabstatus" size="50" DISABLED />
+                                     <input type="text" name="sabstatus" style="text-align:center;font-size:11px;color:white;" id="sabstatus" size="50" DISABLED />
                                      <div name="sabversion" id="sabversion" style="font-size:11px;" align="center">
                                         <%
                                                if mylar.CONFIG.SAB_VERSION is not None:
@@ -525,18 +516,12 @@
 
                             <div class="row checkbox left clearfix">
                                 <input type="checkbox" id="nzbget_client_post_processing" onclick="initConfigCheckbox($(this));" name="nzbget_client_post_processing" value="1" ${config['nzbget_client_post_processing']} /><label>Enable Completed Download Handling</label>
-                                <div id="nzbgetcompletedinfo">
-                                   <div class="row">
-                                       <small class="heading"><span style="float: left; margin-right: .3em; margin-top: 4px;" class="ui-icon ui-icon-info"></span>
-                                       ComicRN script cannot be used with this enabled</small>
-                                   </div>
-                                </div>
                             </div>
 
                             <div align="center" class="row">
                                  <img name="nzbget_statusicon" id="nzbget_statusicon" src="images/success.png" style="float:right;visibility:hidden;" height="20" width="20" />
                                  <input type="button" value="Test NZBGet" id="test_nzbget" style="float:center" /></br>
-                                 <input type="text" name="nzbgetstatus" style="text-align:center; font-size:11px;" id="nzbgetstatus" size="50" DISABLED />
+                                 <input type="text" name="nzbgetstatus" style="text-align:center; font-size:11px;color:white;" id="nzbgetstatus" size="50" DISABLED />
                             </div>
                          
                          </fieldset>
@@ -952,33 +937,33 @@
                                                         torznab_enabled = ""
                                                %>
 
-                                                <div class="config" id="torznab${torznab_number}">
+                                                <div class="config" id="torznab${torznab[6]}">
                                                     <div class="row">
                                                         <label>Torznab Name</label>
-                                                        <input type="text" name="torznab_name${torznab_number}" id="torznab_name${torznab_number}" value="${torznab[0]}" size="30">
+                                                        <input type="text" name="torznab_name${torznab[6]}" id="torznab_name${torznab[6]}" value="${torznab[0]}" size="30">
                                                     </div>
                                                     <div class="row">
                                                         <label>Torznab Host</label>
-                                                        <input type="text" name="torznab_host${torznab_number}" id="torznab_host${torznab_number}" value="${torznab[1]}" size="30">
+                                                        <input type="text" name="torznab_host${torznab[6]}" id="torznab_host${torznab[6]}" value="${torznab[1]}" size="30">
                                                     </div>
                                                     <div class="row checkbox">
-                                                        <input type="checkbox" name="torznab_verify${torznab_number}" id="torznab_verify${torznab_number}" value="1" ${torznab_verify} /><label>Verify SSL</label>
+                                                        <input type="checkbox" name="torznab_verify${torznab[6]}" id="torznab_verify${torznab[6]}" value="1" ${torznab_verify} /><label>Verify SSL</label>
                                                     </div>
                                                     <div class="row">
                                                         <label>Torznab API</label>
-                                                        <input type="text" name="torznab_apikey${torznab_number}" id="torznab_apikey${torznab_number}" value="${torznab[3]}" size="36">
+                                                        <input type="text" name="torznab_apikey${torznab[6]}" id="torznab_apikey${torznab[6]}" value="${torznab[3]}" size="36">
                                                     </div>
                                                     <div class="row">
                                                         <label>Torznab Category</label>
-                                                        <input type="text" name="torznab_category${torznab_number}" id="torznab_category${torznab_number}" value="${torznab[4]}" size="12">
+                                                        <input type="text" name="torznab_category${torznab[6]}" id="torznab_category${torznab[6]}" value="${torznab[4]}" size="12">
                                                     </div>
                                                     <div class="row checkbox">
-                                                        <input id="torznab_enabled${torznab_number}" type="checkbox" name="torznab_enabled${torznab_number}" value="1" ${torznab_enabled} /><label>Enabled</label>
-                                                        <img name="torznabstatus${torznab_number}" id="torznabstatus${torznab_number}" src="images/success.png" style="float:right;visibility:hidden;" height="20" width="20" />
-                                                       <input type="button" class="torznabtest" value="Test ${torznab[0]}" id="torznab_test${torznab_number}" name="torznab_test${torznab_number}" style="float:right;margin-right:10px;" />
+                                                        <input id="torznab_enabled${torznab[6]}" type="checkbox" name="torznab_enabled${torznab[6]}" value="1" ${torznab_enabled} /><label>Enabled</label>
+                                                        <img name="torznabstatus${torznab[6]}" id="torznabstatus${torznab[6]}" src="images/success.png" style="float:right;visibility:hidden;" height="20" width="20" />
+                                                       <input type="button" class="torznabtest" value="Test ${torznab[0]}" id="torznab_test${torznab[6]}" name="torznab_test${torznab[6]}" style="float:right;margin-right:10px;" />
                                                     </div>
                                                     <div class="row">
-                                                        <input type="button" class="remove" id="torznab${torznab_number}" value="Remove ${torznab[0]}">
+                                                        <input type="button" class="remove" id="torznab${torznab[6]}" value="Remove ${torznab[0]}">
                                                     </div>
                                                 </div>
                                                 <%
@@ -1014,41 +999,38 @@
                                             else:
                                                 newznab_verify = ""
                                         %>
-                                        <div class="config" id="newznab${newznab_number}">
+                                        <div class="config" id="newznab${newznab[6]}">
                                             <div class="row">
                                                 <label>Newznab Name</label>
-                                                <input type="text" name="newznab_name${newznab_number}" id="newznab_name${newznab_number}" value="${newznab[0]}" size="30">
+                                                <input type="text" name="newznab_name${newznab[6]}" id="newznab_name${newznab[6]}" value="${newznab[0]}" size="30">
                                                 <small>( If you are running nzbhydra, this name MUST contain [nzbhydra] including brackets )</small>
                                                 <small>( If you are running an indexer local to this box, this name could include [localhost] including brackets to reduce delays between searches )</small>
                                             </div>
                                             <div class="row">
                                                 <label>Newznab Host</label>
-                                                <input type="text" name="newznab_host${newznab_number}" id="newznab_host${newznab_number}" value="${newznab[1]}" size="30">
+                                                <input type="text" name="newznab_host${newznab[6]}" id="newznab_host${newznab[6]}" value="${newznab[1]}" size="30">
                                             </div>
                                             <div class="row checkbox">
-                                                <input id="newznab_verify${newznab_number}" type="checkbox" name="newznab_verify${newznab_number}" value="1" ${newznab_verify} /><label>Verify SSL</label>
+                                                <input id="newznab_verify${newznab[6]}" type="checkbox" name="newznab_verify${newznab[6]}" value="1" ${newznab_verify} /><label>Verify SSL</label>
                                             </div>
                                             <div class="row">
                                                 <label>Newznab API</label>
-                                                <input type="text" name="newznab_apikey${newznab_number}" id="newznab_apikey${newznab_number}" value="${newznab[3]}" size="36">
+                                                <input type="text" name="newznab_apikey${newznab[6]}" id="newznab_apikey${newznab[6]}" value="${newznab[3]}" size="36">
                                             </div>
                                             <div class="row">
                                                 <label>Newznab UID</label>
-                                                <input type="text" name="newznab_uid${newznab_number}" value="${newznab[4]}" size="15">
+                                                <input type="text" name="newznab_uid${newznab[6]}" value="${newznab[4]}" size="15">
                                                 <small>( only needed for RSS feed )</small>
                                             </div>
                                             <div class="row checkbox">
-                                                <input id="newznab_enabled${newznab_number}" type="checkbox" name="newznab_enabled${newznab_number}" value="1" ${newznab_enabled} /><label>Enabled</label>
-                                                <img name="newznabstatus${newznab_number}" id="newznabstatus${newznab_number}" src="images/success.png" style="float:right;visibility:hidden;" height="20" width="20" />
-                                                <input type="button" class="newznabtest" value="Test ${newznab[0]}" id="newznab_test${newznab_number}" name="newznab_test${newznab_number}" style="float:right;margin-right:10px;" />
+                                                <input id="newznab_enabled${newznab[6]}" type="checkbox" name="newznab_enabled${newznab[6]}" value="1" ${newznab_enabled} /><label>Enabled</label>
+                                                <img name="newznabstatus${newznab[6]}" id="newznabstatus${newznab[6]}" src="images/success.png" style="float:right;visibility:hidden;" height="20" width="20" />
+                                                <input type="button" class="newznabtest" value="Test ${newznab[0]}" id="newznab_test${newznab[6]}" name="newznab_test${newznab[6]}" style="float:right;margin-right:10px;" />
                                             </div>
                                             <div class="row">
-                                                <input type="button" class="remove" id="newznab${newznab_number}" value="Remove ${newznab[0]}">
+                                                <input type="button" class="remove" id="newznab${newznab[6]}" value="Remove ${newznab[0]}">
                                             </div>
                                         </div>
-                                        <%
-                                            newznab_number += 1
-                                        %>
                                     %endfor
                                     <input type="button" value="Add Newznab" class="add_newznab" id="add_newznab" />
                                 </div>
@@ -1124,7 +1106,7 @@
                         <fieldset>
                             <legend>Duplicate Dump Folder</legend>
                              <div class="row checkbox left clearfix">
-                                 <input type="checkbox" id="ddump" onclick="initConfigCheckbox($this));" name="ddump" value="1" ${config['ddump']} /><label>Enable Duplicate Dump Folder</label>
+                                 <input type="checkbox" id="ddump" onclick="initConfigCheckbox($(this));" name="ddump" value="1" ${config['ddump']} /><label>Enable Duplicate Dump Folder</label>
                              </div>
                                 <div class="config">
                                     <div class="row"">
@@ -1136,7 +1118,7 @@
                         <fieldset>
                              <legend>Failed Download Handling</legend>
                              <div class="row checkbox left clearfix">
-                                 <input type="checkbox" id="enable_failed" onclick="initConfigCheckbox($this));" name="failed_download_handling" value="1" ${config['failed_download_handling']} /><label>Enable Failed Download Handling</label>
+                                 <input type="checkbox" id="enable_failed" onclick="initConfigCheckbox($(this));" name="failed_download_handling" value="1" ${config['failed_download_handling']} /><label>Enable Failed Download Handling</label>
                              </div>
                                 <div class="config">
                                     <div class="row checkbox left clearfix">
@@ -1150,7 +1132,7 @@
                         <fieldset>
                                 <legend>Post-Processing</legend>
                                 <div class="row checkbox left clearfix">
-                                     <input type="checkbox" id="post_processing" onclick="initConfigCheckbox($this));" name="post_processing" value="1" ${config['post_processing']} /><label>Enable Post-Processing<small> (not checked = NO post-processing/post-management)</small></label>
+                                     <input type="checkbox" id="post_processing" onclick="initConfigCheckbox($(this));" name="post_processing" value="1" ${config['post_processing']} /><label>Enable Post-Processing<small> (not checked = NO post-processing/post-management)</small></label>
                                 </div>
                                 <div class="config">
                                     <div class="row left">
@@ -1175,7 +1157,7 @@
                                     </div>
                                     <br/>
                                     <div class="row checkbox left clearfix">
-                                        <input type="checkbox" id="enable_check_folder" onclick="initConfigCheckbox($this));" name="enable_check_folder" value="1" ${config['enable_check_folder']} /><label>Enable Folder Monitoring<small></label>
+                                        <input type="checkbox" id="enable_check_folder" onclick="initConfigCheckbox($(this));" name="enable_check_folder" value="1" ${config['enable_check_folder']} /><label>Enable Folder Monitoring<small></label>
                                     </div>
                                     <div class="config">
                                        <div class="row">
@@ -1192,7 +1174,7 @@
                                     </div>
                                 </div>
                                 <div class="row checkbox left clearfix">
-                                    <input type="checkbox" id="enable_pre_scripts" onclick="initConfigCheckbox($this));" name="enable_pre_scripts" value="1" ${config['enable_pre_scripts']} /><label>Run script BEFORE Post-Processing</label>
+                                    <input type="checkbox" id="enable_pre_scripts" onclick="initConfigCheckbox($(this));" name="enable_pre_scripts" value="1" ${config['enable_pre_scripts']} /><label>Run script BEFORE Post-Processing</label>
                                 </div>
                                 <div class="config">
                                    <div class="row">
@@ -1202,7 +1184,7 @@
                                    </div>
                                 </div>
                                 <div class="row checkbox left clearfix">
-                                    <input type="checkbox" id="enable_snatch_script" onclick="initConfigCheckbox($this));" name="enable_snatch_script" value="1" ${config['enable_snatch_script']} /><label>Run script AFTER an item has been snatched and sent to client</label>
+                                    <input type="checkbox" id="enable_snatch_script" onclick="initConfigCheckbox($(this));" name="enable_snatch_script" value="1" ${config['enable_snatch_script']} /><label>Run script AFTER an item has been snatched and sent to client</label>
                                 </div>
                                 <div class="config">
                                     <div class="row">
@@ -1212,7 +1194,7 @@
                                     </div>
                                 </div>
                                 <div class="row checkbox left clearfix">
-                                    <input type="checkbox" id="enable_extra_scripts" onclick="initConfigCheckbox($this));" name="enable_extra_scripts" value="1" ${config['enable_extra_scripts']} /><label>Run script AFTER Post-Processing</label>
+                                    <input type="checkbox" id="enable_extra_scripts" onclick="initConfigCheckbox($(this));" name="enable_extra_scripts" value="1" ${config['enable_extra_scripts']} /><label>Run script AFTER Post-Processing</label>
                                 </div>
                                 <div class="config">
                                     <div class="row">
@@ -1339,7 +1321,7 @@
                                     <label> File Format</label>
                                     <input type="text" name="file_format" value="${config['file_format']}" size="43">
                                     <%
-                                         file_options = "$Series = SeriesName\n$Year = IssueYear\n$Annual = Annual (word)\n$Issue = IssueNumber\n$VolumeY = V{SeriesYear}\n$VolumeN = V{Volume#}\n$month = publication month number\n$monthname = publication month name\n$Type = BookType (TPB/GN/HC/One-Shot/Digital)"
+                                         file_options = "$Series = SeriesName\n$Year = IssueYear\n$Annual = Annual (word)\n$Issue = IssueNumber\n$VolumeY = V{SeriesYear}\n$VolumeN = V{Volume#}\n$month = publication month number\n$monthname = publication month name"
                                     %>
                                     <a href="#" title="${file_options}"><img src="images/info32.png" height="16" alt="" /></a>
                                     <small>Use:  $Series, $Year, $Issue<br />
@@ -1767,12 +1749,25 @@
                });
         }
 
+        function annuals_integration(){
+            var aob = document.getElementById("annuals_info");
+            if ($("#annuals_on").is(":checked")){
+                console.log('on');
+                aob.style = "display:block;";
+                aob.innerHTML = '<small>Annuals will be tracked as part of the series it belongs to</small>';
+            } else {
+                console.log('off');
+                aob.style = "display:block;";
+                aob.innerHTML = '<small>Annuals will be tracked independently</br>( will appear on your watchlist as individual series )</small>';
+            }
+        }
+
         </script>
 	<script>
 	function initThisPage() 
 	
 	{
-
+                var prov_start_id = 0;
                 if ($("#api_enabled").is(":checked"))
                         {
                                 $("#apioptions").show();
@@ -1790,44 +1785,6 @@
                         else
                         {
                                 $("#apioptions").slideUp();
-                        }
-                });
-                if ($("#sab_client_post_processing").is(":checked"))
-                        {
-                                $("#sabcompletedinfo").show();
-                        }
-                else
-                        {
-                                $("#sabcompletedinfo").hide();
-                        }
-
-                $("#sab_client_post_processing").click(function(){
-                        if ($("#sab_client_post_processing").is(":checked"))
-                        {
-                                $("#sabcompletedinfo").slideDown();
-                        }
-                        else
-                        {
-                                $("#sabcompletedinfo").slideUp();
-                        }
-                });
-                if ($("#nzbget_client_post_processing").is(":checked"))
-                        {
-                                $("#nzbgetcompletedinfo").show();
-                        }
-                else
-                        {
-                                $("#nzbgetcompletedinfo").hide();
-                        }
-
-                $("#nzbget_client_post_processing").click(function(){
-                        if ($("#nzbget_client_post_processing").is(":checked"))
-                        {
-                                $("#nzbgetcompletedinfo").slideDown();
-                        }
-                        else
-                        {
-                                $("#nzbgetcompletedinfo").slideUp();
                         }
                 });
                 if ($("#opds_enable").is(":checked"))
@@ -2332,19 +2289,6 @@
                             vsab = numberWithDecimals(versionsab);
                             $('#sabstatus').val(obj['message']);
                             $('#sabversion span').text('SABnzbd version: '+versionsab);
-                            if ( vsab < "0.8.0" ){
-                                scdh = document.getElementById("sab_cdh");
-                                scdh.style.display = "none";
-                                nocdh = document.getElementById("sab_nocdh");
-                                nocdh.style.display = "unset";
-                                scdh_line = document.getElementById("sab_client_post_processing");
-                                scdh_line.value = 0;
-                            } else {
-                                scdh = document.getElementById("sab_cdh");
-                                scdh.style.display = "unset";
-                                nocdh = document.getElementById("sab_nocdh");
-                                nocdh.style.display = "none";
-                            }
                             $('#ajaxMsg').removeClass();
                             $('#ajaxMsg').html("<div class='msg'><span class='ui-icon ui-icon-check'></span>"+obj['message']+"</div>");
                             if (obj['status']){
@@ -2359,6 +2303,10 @@
                                 $('#ajaxMsg').addClass('error').fadeIn().delay(3000).fadeOut();
                             }
                     });
+                });
+
+                $('#annuals_on').click(function () {
+                    annuals_integration();
                 });
 
                 $('#test_nzbget').click(function () {
@@ -2381,13 +2329,14 @@
                                 imagechk.src = "";
                                 imagechk.src = "images/success.png";
                                 imagechk.style.visibility = "visible";
+                                $('#ajaxMsg').addClass('success').fadeIn().delay(3000).fadeOut();
                             } else {
                                 imagechk.src = "";
                                 imagechk.src = "images/x_red.png";
                                 imagechk.style.visibility = "visible";
+                                $('#ajaxMsg').addClass('error').fadeIn().delay(3000).fadeOut();
                             }
                     });
-                    $('#ajaxMsg').addClass('success').fadeIn().delay(3000).fadeOut();
                 });
 
                 if ($("#enable_https").is(":checked"))
@@ -2442,7 +2391,7 @@
                 });
 
                 $("#add_newznab").click(function() {
-                    var intId = $("#newznab_providers > div").size() + deletedNewznabs + 1;
+                    var intId = '_'+prov_start_id;
                     var newzformfields = $("<div class=\"config\" id=\"newznab" + intId + "\"><div class=\"row\"><label>Newznab Name</label><input type=\"text\" id=\"newznab_name" + intId + "\" name=\"newznab_name" + intId + "\" size=\"36\"></div><div class=\"row\"><label>Newznab Host</label><input type=\"text\" id=\"newznab_host" + intId + "\" name=\"newznab_host" + intId + "\" + value=\"http://\" + size=\"30\"></div><div class=\"row checkbox\"><input type=\"checkbox\" id=\"newznab_verify" + intId + "\" name=\"newznab_verify" + intId + "\" value=\"0\" checked /><label>Verify SSL</label></div><div class=\"row\"><label>Newznab API</label><input type=\"text\" id=\"newznab_apikey" + intId + "\" name=\"newznab_apikey" + intId + "\" size=\"36\"></div><div class=\"row\"><label>Newznab UID</label><input type=\"text\" id=\"newznab_uid" + intId + "\" name=\"newznab_uid" + intId + "\" size=\"15\"></div><div class=\"row checkbox\"><input type=\"checkbox\" name=\"newznab_enabled" + intId + "\" value=\"1\" checked /><label>Enabled</label></div>");
                     var newztestButton = $("<div class=\"row\"><img name=\"newznabstatus" + intId + "\" id=\"newznabstatus" + intId + "\" src=\"images/success.png\" style=\"float:right;visibility:hidden;\" height=\"20\" width=\"20\" /><input type=\"button\" class=\"newznabtest\" value=\"Test\" id=\"newznab_test" + intId + "\"  name=\"newznab_test" + intId + "\" style=\"float:right;margin-right:10px;\" /></div>");
                     var newzremoveButton = $("<div class=\"row\"><input type=\"button\" class=\"remove\" value=\"Remove\" /></div>");
@@ -2454,10 +2403,11 @@
                     newzformfields.append(newzremoveButton);
                     newzformfields.append("</div>");
                     $("#add_newznab").before(newzformfields);
+                    prov_start_id++;
                 });
 
                 $("#add_torznab").click(function() {
-                    var intId = $("#torznab_providers > div").size() + deletedTorznabs + 1;
+                    var intId = '_'+prov_start_id;
                     var torformfields = $("<div class=\"config\" id=\"torznab" + intId + "\"><div class=\"row\"><label>Torznab Name</label><input type=\"text\" id=\"torznab_name" + intId + "\" name=\"torznab_name" + intId + "\" size=\"36\"></div><div class=\"row\"><label>Torznab Host</label><input type=\"text\" id=\"torznab_host" + intId + "\" name=\"torznab_host" + intId + "\" + value=\"http://\" + size=\"30\"></div><div class=\"row checkbox\"><input id=\"torznab_verify" + intId + "\" type=\"checkbox\" name=\"torznab_verify" + intId + "\" value=\"1\"/><label>Verify SSL</label></div><div class=\"row\"><label>Torznab API</label><input type=\"text\" id=\"torznab_apikey" + intId + "\" name=\"torznab_apikey" + intId + "\" size=\"36\"></div><div class=\"row\"><label>Torznab Category</label><input type=\"text\" id=\"torznab_category" + intId + "\" name=\"torznab_category" + intId + "\" size=\"36\"></div><div class=\"row checkbox\"><input type=\"checkbox\" name=\"torznab_enabled" + intId + "\" value=\"1\" checked /><label>Enabled</label></div>");
                     var tortestButton = $("<div class=\"row\"><img name=\"torznabstatus" + intId + "\" id=\"torznabstatus" + intId + "\" src=\"images/success.png\" style=\"float:right;visibility:hidden;\" height=\"20\" width=\"20\" /><input type=\"button\" class=\"torznabtest\" value=\"Test\" id=\"torznab_test" + intId + "\"  name=\"torznab_test" + intId + "\" style=\"float:right;margin-right:10px;\" /></div>");
                     var torremoveButton = $("<div class=\"row\"><input type=\"button\" class=\"remove\" value=\"Remove\" /></div>");
@@ -2469,6 +2419,7 @@
                     torformfields.append(torremoveButton);
                     torformfields.append("</div>");
                     $("#add_torznab").before(torformfields);
+                    prov_start_id++;
                 });
 
                 $('#qbittorrent_test').click(function () {
@@ -2888,6 +2839,7 @@
 	}
 	$(document).ready(function() {
 		initThisPage();
+                annuals_integration()
 	});
 	
 	</script>

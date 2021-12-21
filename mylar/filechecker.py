@@ -134,13 +134,14 @@ class FileChecker(object):
                     }
         else:
             filelist = self.traverse_directories(self.dir)
-
             for files in filelist:
                 filedir = files['directory']
                 filename = files['filename']
                 filesize = files['comicsize']
                 if filename.startswith('.'):
-                    if all([self.watchcomic is not None, self.watchcomic.startswith('.')]):
+                    if self.watchcomic is None:
+                        continue
+                    elif self.watchcomic.startswith('.'):
                         pass
                     else:
                         continue
@@ -1227,7 +1228,9 @@ class FileChecker(object):
                     issue_number = '%s %s' % (isn, issue_number)
                 else:
                     issue_number = isn
+                series_name = re.sub('2021 annual', '', series_name, flags=re.I).strip()
                 series_name = re.sub('annual', '', series_name, flags=re.I).strip()
+                series_name_decoded = re.sub('2021 annual', '', series_name_decoded, flags=re.I).strip()
                 series_name_decoded = re.sub('annual', '', series_name_decoded, flags=re.I).strip()
             elif 'special' in series_name.lower():
                 isn = 'Special'

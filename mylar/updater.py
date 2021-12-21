@@ -26,6 +26,19 @@ import calendar
 import mylar
 from mylar import db, logger, helpers, filechecker
 
+def addvialist(queue):
+    while True:
+        if queue.qsize() >= 1:
+            time.sleep(3)
+            item = queue.get(True)
+            if item == 'exit':
+                break
+            logger.info('[MASS-REFRESH][1/%s] Now refreshing %s [%s] ' % (queue.qsize()+1, item['comicname'], item['comicid']))
+            dbUpdate([item['comicid']], calledfrom='refresh')
+        else:
+            mylar.REFRESH_QUEUE.put('exit')
+    return False
+
 def dbUpdate(ComicIDList=None, calledfrom=None, sched=False):
     if mylar.IMPORTLOCK:
         logger.info('Import is currently running - deferring this until the next scheduled run sequence.')
@@ -204,7 +217,8 @@ def dbUpdate(ComicIDList=None, calledfrom=None, sched=False):
                         if chkstatus['anndata'] is not None:
                             mylar.importer.manualAnnual(annchk=chkstatus['anndata'])
                     else:
-                        logger.warn('There was an error when refreshing this series - Make sure directories are writable/exist, etc')
+                        logger.warn('There was an error when refreshing this series - Make sure directories are writable/exist, and check the logs for any errors/problems.')
+                        mylar.GLOBAL_MESSAGES = {'status': 'failure', 'comicname': ComicName, 'seriesyear': dspyear , 'comicid': ComicID, 'tables': 'both', 'message': 'Failure refreshing %s (%s)' % (ComicName, dspyear)}
                         return
 
                     issues_new = myDB.select('SELECT * FROM issues WHERE ComicID=?', [ComicID])
@@ -367,6 +381,8 @@ def dbUpdate(ComicIDList=None, calledfrom=None, sched=False):
         if all([sched is False, calledfrom != 'refresh', len(comiclist) > 1]):
             time.sleep(15) #pause for 15 secs so dont hammer CV and get 500 error
         else:
+            if calledfrom == 'refresh':
+                mylar.GLOBAL_MESSAGES = {'status': 'success', 'comicname': ComicName, 'seriesyear': dspyear , 'comicid': ComicID, 'tables': 'both', 'message': 'Successfully refreshed %s (%s)' % (ComicName, dspyear)}
             break
 
     #helpers.job_management(write=True, job='DB Updater', last_run_completed=helpers.utctimestamp(), status='Waiting')
@@ -789,10 +805,12 @@ def foundsearch(ComicID, IssueID, mode=None, down=None, provider=None, SARC=None
 
     logger.fdebug(module + ' comicid: ' + str(ComicID))
     logger.fdebug(module + ' issueid: ' + str(IssueID))
+    seriesyear = None
     if mode != 'pullwant':
         if mode != 'story_arc':
             comic = myDB.selectone('SELECT * FROM comics WHERE ComicID=?', [ComicID]).fetchone()
             ComicName = comic['ComicName']
+            seriesyear = comic['ComicYear']
             if mode == 'want_ann':
                 issue = myDB.selectone('SELECT * FROM annuals WHERE IssueID=?', [IssueID]).fetchone()
                 if ComicName != issue['ReleaseComicName'] + ' Annual':
@@ -854,7 +872,7 @@ def foundsearch(ComicID, IssueID, mode=None, down=None, provider=None, SARC=None
         if mode == 'story_arc':
             IssueNum = issue['IssueNumber']
             newsnatchValues = {"ComicName":       ComicName,
-                               "ComicID":         'None',
+                               "ComicID":         ComicID, #'None',
                                "Issue_Number":    IssueNum,
                                "DateAdded":       helpers.now(),
                                "Status":          "Snatched",
@@ -923,7 +941,13 @@ def foundsearch(ComicID, IssueID, mode=None, down=None, provider=None, SARC=None
                     pass
 
             myDB.upsert("oneoffhistory", newValue, ctlVal)
+
+        global_line = 'Successfully snatched %s #%s' % (ComicName, IssueNum)
+        if IssueNum is None:
+            global_line = 'Successfully snatched %s' % (ComicName)
+
         logger.info('%s Updated the status (Snatched) complete for %s Issue: %s' % (module, ComicName, IssueNum))
+        mylar.GLOBAL_MESSAGES = {'status': 'success', 'comicname': ComicName, 'seriesyear': seriesyear, 'comicid': ComicID, 'tables': 'tables', 'message': global_line}
     else:
         if down == 'PP':
             logger.info(module + ' Setting status to Post-Processed in history.')
@@ -1393,10 +1417,15 @@ def forceRescan(ComicID, archive=None, module=None, recheck=False):
                                         multiplechk = True
                                         break
                                     if (ma['IssueYear'] in tmpfc['ComicFilename']) and (issyear == ma['IssueYear']):
-                                        logger.fdebug(module + ' Matched to year within filename : ' + str(issyear))
-                                        multiplechk = False
-                                        ANNComicID = ack['ReleaseComicID']
-                                        break
+                                        # make sure that the IssueYear discovered is not preceded by a volume so it matches correctly
+                                        vchk = tmpfc['ComicFilename'].find(ma['IssueYear'])
+                                        if tmpfc['ComicFilename'][vchk-1].lower() == 'v':
+                                            multiplechk = True
+                                        else:
+                                            logger.fdebug(module + ' Matched to year within filename : ' + str(issyear))
+                                            multiplechk = False
+                                            ANNComicID = ack['ReleaseComicID']
+                                            break
                                     else:
                                         logger.fdebug(module + ' Did not match to year within filename : ' + str(issyear))
                                         multiplechk = True
@@ -2038,7 +2067,7 @@ def watchlist_updater(calledfrom=None, sched=False):
             '%Y-%m-%d %H:%M:%S'), loaddate_stamp)
         )
 
-    helpers.job_management(write=True, job='DB Updater', current_run=helpers.utctimestamp(), status='Waiting')
+    helpers.job_management(write=True, job='DB Updater', last_run_completed=helpers.utctimestamp(), status='Waiting')
     mylar.UPDATER_STATUS = 'Waiting'
 
     # once we trigger it the dates above are updated to backfill dates and we can

@@ -13,7 +13,7 @@
 
 
 <%def name="body()">
-
+        <input type="hidden" id="page_name" value="upcoming" />
 	<div class="title">
 		<h1 class="clearfix"><img src="${icons['icon_wanted']}" alt="Wanted Issues"/>Wanted Issues (${wantedcount})</h1>
 	</div>
@@ -44,6 +44,7 @@
                                 <option value="Downloaded">Downloaded</option>
                                 <option value="Archived">Archived</option>
                                 <option value="Ignored">Ignored</option>
+                                <option value="OppositeTier">Opposite Tier</option>
                 </select>
                 <input type="hidden" value="Go">
           </div>

@@ -48,15 +48,24 @@ def is_exists(comicid):
     else:
         return False
 
-def addvialist():
-    if mylar.ADD_LIST:
-        cnt = 1
-        for x in mylar.ADD_LIST:
-            logger.info('[MASS-ADD][%s/%s] Now adding %s [%s] to your watchlist' % (cnt, len(mylar.ADD_LIST), x['series'], x['comicid']))
-            addComictoDB(x['comicid'])
-            #mylar.ADD_LIST.pop(x)
-            cnt += 1
-        logger.info('[MASS-ADD] Succesfully added %s series to your watchlist' % (cnt-1))
+def addvialist(queue):
+    while True:
+        if queue.qsize() >= 1:
+            time.sleep(3)
+            item = queue.get(True)
+            if item == 'exit':
+                break
+            if item['comicname'] is not None:
+                logger.info('[MASS-ADD][1/%s] Now adding %s [%s] ' % (queue.qsize()+1, item['comicname'], item['comicid']))
+                mylar.GLOBAL_MESSAGES = {'status': 'success', 'event': 'addbyid', 'comicname': item['comicname'], 'seriesyear': None, 'comicid': item['comicid'], 'tables': 'None', 'message': 'Now adding %s' % (urllib.parse.unquote_plus(item['comicname']))}
+            else:
+                logger.info('[MASS-ADD][1/%s] Now adding ComicID: %s ' % (queue.qsize()+1, item['comicid']))
+                mylar.GLOBAL_MESSAGES = {'status': 'success', 'event': 'addbyid', 'comicname': item['comicname'], 'seriesyear': None, 'comicid': item['comicid'], 'tables': 'None', 'message': 'Now adding via ComicID %s' % (item['comicid'])}
+
+            addComictoDB(item['comicid'])
+        else:
+            mylar.ADD_LIST.put('exit')
+    return False
 
 def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=None, calledfrom=None, annload=None, chkwant=None, issuechk=None, issuetype=None, latestissueinfo=None, csyear=None, fixed_type=None):
     myDB = db.DBConnection()
@@ -232,7 +241,19 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
         if all([mylar.CONFIG.SETDEFAULTVOLUME is True, comicVol is None]):
             comicVol = 'v1'
 
+    #try to account for CV not updating new issues as fast as GCD
+    #seems CV doesn't update total counts
+    #comicIssues = gcdinfo['totalissues']
+    comicIssues = comic['ComicIssues']
 
+    logger.fdebug('comicIssues: %s' % comicIssues)
+    logger.fdebug('seriesyear: %s / currentyear: %s' % (SeriesYear, helpers.today()[:4]))
+    logger.fdebug('comicType: %s' % comic['Type'])
+    if all([int(comicIssues) == 1, SeriesYear < helpers.today()[:4], comic['Type'] != 'One-Shot', comic['Type'] != 'TPB', comic['Type'] != 'HC', comic['Type'] != 'GN']):
+        logger.info('Determined to be a one-shot issue. Forcing Edition to One-Shot')
+        booktype = 'One-Shot'
+    else:
+        booktype = comic['Type']
 
     # setup default location here
     u_comicnm = comic['ComicName']
@@ -246,7 +267,7 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
                         'PublisherImprint': comic['PublisherImprint'],
                         'ComicYear':        SeriesYear,
                         'ComicVersion':     comicVol,
-                        'Type':             comic['Type'],
+                        'Type':             booktype,
                         'Corrected_Type':   comic['Corrected_Type']}
 
         dothedew = filers.FileHandlers(comic=comic_values)
@@ -270,11 +291,6 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
     else:
         logger.warn('Comic Location path has not been specified as required in your configuration. Aborting this process at this time.')
         return {'status': 'incomplete'}
-
-    #try to account for CV not updating new issues as fast as GCD
-    #seems CV doesn't update total counts
-    #comicIssues = gcdinfo['totalissues']
-    comicIssues = comic['ComicIssues']
 
     if not mylar.CONFIG.CV_ONLY:
         if gcdinfo['gcdvariation'] == "cv":
@@ -361,15 +377,6 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
     else:
         aliases = aliases
 
-    logger.fdebug('comicIssues: %s' % comicIssues)
-    logger.fdebug('seriesyear: %s / currentyear: %s' % (SeriesYear, helpers.today()[:4]))
-    logger.fdebug('comicType: %s' % comic['Type'])
-    if all([int(comicIssues) == 1, SeriesYear < helpers.today()[:4], comic['Type'] != 'One-Shot', comic['Type'] != 'TPB', comic['Type'] != 'HC', comic['Type'] != 'GN']):
-        logger.info('Determined to be a one-shot issue. Forcing Edition to One-Shot')
-        booktype = 'One-Shot'
-    else:
-        booktype = comic['Type']
-
     #for description ...
     #Cdesc = helpers.cleanhtml(comic['ComicDescription'])
     Cdesc = comic['ComicDescription']
@@ -401,7 +408,7 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
                     "DetailURL":          comic['ComicURL'],
                     "AlternateSearch":    aliases,
 #                    "ComicPublished":    gcdinfo['resultPublished'],
-                    "ComicPublished":     "Unknown",
+                    "ComicPublished":     None, #"Unknown",
                     "Type":               booktype,
                     "Corrected_Type":     comic['Corrected_Type'],
                     "Collects":           issue_list,
@@ -426,6 +433,13 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
     #move to own function so can call independently to only refresh issue data
     #issued is from cv.getComic, comic['ComicName'] & comicid would both be already known to do independent call.
     updateddata = updateissuedata(comicid, comic['ComicName'], issued, comicIssues, calledfrom, SeriesYear=SeriesYear, latestissueinfo=latestissueinfo, serieslast_updated=serieslast_updated)
+    try:
+        if updateddata['status'] == 'failure':
+            logger.warn('Unable to properly retrieve issue details - this is usually due to either irregular issue numbering, or problems with CV')
+            return {'status': 'incomplete'}
+    except Exception:
+        pass
+
     issuedata = updateddata['issuedata']
     anndata = updateddata['annualchk']
     nostatus = updateddata['nostatus']
@@ -447,7 +461,7 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
             statinfo = os.stat(cimage)
             coversize = statinfo.st_size
 
-        if FirstImageSize != 0 and (os.path.isfile(cimage) is True and FirstImageSize == coversize):
+        if os.path.isfile(cimage) and all([FirstImageSize != 0, FirstImageSize == coversize]):
             logger.fdebug('Cover already exists for series. Not redownloading.')
         else:
             image_it(comicid, importantdates['LatestIssueID'], comlocation, comic['ComicImage'])
@@ -591,6 +605,7 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
         return
 
     if calledfrom == 'addbyid':
+        mylar.GLOBAL_MESSAGES = {'status': 'success', 'comicname': comic['ComicName'], 'seriesyear': SeriesYear, 'comicid': comicid, 'tables': 'both', 'message': 'Successfully added %s (%s)!' % (comic['ComicName'], SeriesYear)}
         logger.info('Sucessfully added %s (%s) to the watchlist by directly using the ComicVine ID' % (comic['ComicName'], SeriesYear))
         return {'status': 'complete'}
     elif calledfrom == 'maintenance':
@@ -599,6 +614,7 @@ def addComictoDB(comicid, mismatch=None, pullupd=None, imported=None, ogcname=No
                 'comicname': comic['ComicName'],
                 'year':      SeriesYear}
     else:
+        mylar.GLOBAL_MESSAGES = {'status': 'success', 'comicname': comic['ComicName'], 'seriesyear': SeriesYear, 'comicid': comicid, 'tables': 'both', 'message': 'Successfully added %s (%s)!' % (comic['ComicName'], SeriesYear)}
         logger.info('Sucessfully added %s (%s) to the watchlist' % (comic['ComicName'], SeriesYear))
         return {'status': 'complete'}
 
@@ -1209,7 +1225,7 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
                 break
             except Exception as e:
                 logger.warn('Unable to parse issue details for series - ComicVine is probably having problems.')
-                return
+                return {'status': 'failure'}
             try:
                 cleanname = firstval['Issue_Name'] #helpers.cleanName(firstval['Issue_Name'])
             except:
@@ -1233,6 +1249,8 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
                     int_issnum = (int(issnum[:-4]) * 1000) + ord('i') + ord('n') + ord('h')
                 elif 'now' in issnum.lower():
                     int_issnum = (int(issnum[:-4]) * 1000) + ord('n') + ord('o') + ord('w')
+                elif 'bey' in issnum.lower():
+                    int_issnum = (int(issnum[:-4]) * 1000) + ord('b') + ord('e') + ord('y')
                 elif 'mu' in issnum.lower():
                     int_issnum = (int(issnum[:-3]) * 1000) + ord('m') + ord('u')
                 elif 'lr' in issnum.lower():
@@ -1284,7 +1302,7 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
                     except ValueError:
                         logger.error('This has no issue # for me to get - Either a Graphic Novel or one-shot.')
                         updater.no_searchresults(comicid)
-                        return
+                        return {'status': 'failure'}
                 else:
                     try:
                         x = float(issnum)
@@ -1341,7 +1359,7 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
                                 int_issnum = ordtot
                             else:
                                 logger.fdebug('this does not have an issue # that I can parse properly.')
-                                return
+                                return {'status': 'failure'}
                         else:
                             # Matches "number -&/\ number"
                             match = re.match(r"(?P<first>\d+)\s?[-&/\\]\s?(?P<last>\d+)", issnum)
@@ -1378,7 +1396,7 @@ def updateissuedata(comicid, comicname=None, issued=None, comicIssues=None, call
                                 int_issnum = ordtot
                             else:
                                 logger.error(issnum + ' this has an alpha-numeric in the issue # which I cannot account for.')
-                                return
+                                return {'status': 'failure'}
             #get the latest issue / date using the date.
             #logger.fdebug('issue : ' + str(issnum))
             #logger.fdebug('latest date: ' + str(latestdate))
@@ -1783,16 +1801,47 @@ def importer_thread(serieslist):
     if type(serieslist) != list:
         serieslist  = [(serieslist)]
 
+    threaded_call = True
+
+    list(map(mylar.ADD_LIST.put, serieslist))
+
     try:
         if mylar.MASS_ADD.is_alive():
-            mylar.ADD_LIST += serieslist
             logger.info('[MASS-ADD] MASS_ADD thread already running. Adding an additional %s items to existing queue' % len(serieslist))
-            return
+            threaded_call = False
     except Exception:
         pass
 
-    logger.info('[MASS-ADD] MASS_ADD thread not started. Started & submitting.')
-    mylar.ADD_LIST += serieslist
-    mylar.MASS_ADD = threading.Thread(target=addvialist, name="mass-add")
-    mylar.MASS_ADD.start()
+    if threaded_call is True:
+        logger.info('[MASS-ADD] MASS_ADD thread not started. Started & submitting.')
+        mylar.MASS_ADD = threading.Thread(target=addvialist, args=(mylar.ADD_LIST,), name="mass-add")
+        mylar.MASS_ADD.start()
+        if not mylar.MASS_ADD:
+            mylar.MASS_ADD.join(5)
+
+
+def refresh_thread(serieslist):
+    # refresh thread to queue up series to be refreshed
+    # serieslist = (28991, 38391, 93810)
+
+    if type(serieslist) != list:
+        serieslist  = [(serieslist)]
+
+    threaded_call = True
+
+    list(map(mylar.REFRESH_QUEUE.put, serieslist))
+
+    try:
+        if mylar.MASS_REFRESH.is_alive():
+            logger.info('[MASS-REFRESH] MASS_REFRESH thread already running. Adding an additional %s items to existing queue' % len(serieslist))
+            threaded_call = False
+    except Exception:
+        pass
+
+    if threaded_call is True:
+        logger.info('[MASS-REFRESH] MASS_REFRESH thread not started. Started & submitting.')
+        mylar.MASS_REFRESH = threading.Thread(target=updater.addvialist, args=(mylar.REFRESH_QUEUE,), name="mass-refresh")
+        mylar.MASS_REFRESH.start()
+        if not mylar.MASS_REFRESH:
+            mylar.MASS_REFRESH.join(5)
 
