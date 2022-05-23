@@ -158,6 +158,10 @@ def getComic(comicid, rtype, issueid=None, arc=None, arcid=None, arclist=None, c
                 #new api - have to change to page # instead of offset count
                 offsetcount = countResults
                 searched = pulldetails(id, 'issue', None, offsetcount, islist)
+            if not searched:
+                # if it's a CV timeout/error, just return what we have thus far and hopefully
+                # the next run will be able to catch things up
+                break
             issuechoice, tmpdate = GetIssuesInfo(id, searched, arcid)
             if tmpdate < firstdate:
                 firstdate = tmpdate
@@ -350,7 +354,7 @@ def GetComicInfo(comicid, dom, safechk=None, series=False):
             if dom.getElementsByTagName('name')[n].parentNode.nodeName == 'results':
                 try:
                     comic['ComicName'] = dom.getElementsByTagName('name')[n].firstChild.wholeText
-                    comic['ComicName'] = comic['ComicName'].rstrip()
+                    comic['ComicName'] = comic['ComicName'].strip()
                 except:
                     logger.error('There was a problem retrieving the given data from ComicVine. Ensure that www.comicvine.com is accessible AND that you have provided your OWN ComicVine API key.')
                     return
@@ -381,111 +385,138 @@ def GetComicInfo(comicid, dom, safechk=None, series=False):
     comicPublisher = comic['ComicPublisher']
     publisherImprint= None
 
-    if series is True:
-        # this is a really crappy way to do it - it works, but meh.
-        try:
-            for k,v in mylar.PUBLISHER_IMPRINTS.items():
-                if k == 'publishers':
-                    for b in v:
-                        for d,e in b.items():
-                            for g in e:
-                                chkyear = False
-                                for f,h in g.items():
-                                    if f == 'name':
-                                        pubname = h
-                                    if f == 'publication_run' and chkyear is True:
-                                        pubrun = h
-                                        y = pubrun.find('-')
-                                        pub_start = pubrun[:y][:4].strip()
-                                        pub_start_month = pubrun[:y][pubrun.find('.')+1:].strip()
-                                        pub_end = pubrun[y+2:][:4].strip()
-                                        if len(pub_end) == 0 and len(pub_start) == 0:
-                                            chkyear = False
-                                            found = False
-                                            continue
-                                        elif len(pub_end) == 0:
-                                            pub_end = None
-                                            if int(comic['ComicYear']) <= int(pub_start[:4]):
-                                                logger.info('comic year of %s is prior to imprint publication date of %s' % (comic['ComicYear'], pub_start[:4]))
-                                                comic['ComicPublisher'] = None
-                                                comic['PublisherImprint'] = None
-                                                found = False
-                                            else:
-                                                found = True
-                                        else:
-                                            if int(pub_end[:4]) > int(comic['ComicYear'])  > int(pub_start[:4]):
-                                                found = True
-                                            else:
-                                                pub_end_month = pubrun[y+2:][pubrun.find('.',y+2)+1:].strip()
-                                                if any([ int(pub_end[:4]) == int(comic['ComicYear']), int(pub_start[:4]) == int(comic['ComicYear']) ]):
-                                                    quick_chk = getComic(comicid=None, rtype='imprints_first', issueid=comic['FirstIssueID'])
-                                                    if quick_chk:
-                                                        cdate = None
-                                                        sdate = None
-                                                        #quick_chk['store_date'], quick_chk['cover_date']
-                                                        if quick_chk['cover_date'] and quick_chk['cover_date'] != '0000':
-                                                            cdate = quick_chk['cover_date'][5:7]
-                                                        if quick_chk['store_date'] and quick_chk['store_date'] != '0000':
-                                                            sdate = quick_chk['store_date'][5:7]
+    #the description field actually holds the Volume# - so let's grab it
+    desc_soup = None
+    try:
+        descchunk = dom.getElementsByTagName('description')[0].firstChild.wholeText
+        desc_soup = Soup(descchunk, "html.parser")
+        desclinks = desc_soup.findAll('a')
+        comic_desc = drophtml(descchunk)
+    #    desdeck +=1
+    except:
+        comic_desc = 'None'
 
-                                                        if int(pub_end[:4]) == int(comic['ComicYear']):
-                                                            if cdate != None:
-                                                                end_month = cdate
-                                                            else:
-                                                                end_month = sdate
-                                                            if int(pub_end_month) <= int(end_month):
-                                                                logger.fdebug('[Year;%s] publication month of %s is before the end imprint date of %s' % (comic['ComicYear'], end_month, pub_end_month))
-                                                                found = True
-                                                            else:
-                                                                found = False
+    #sometimes the deck has volume labels
+    try:
+        deckchunk = dom.getElementsByTagName('deck')[0].firstChild.wholeText
+        comic_deck = deckchunk
+    #    desdeck +=1
+    except:
+        comic_deck = 'None'
 
-                                                        elif int(pub_start[:4]) == int(comic['ComicYear']):
-                                                            if cdate != None:
-                                                                start_month = cdate
-                                                            else:
-                                                                start_month = sdate
-                                                            if int(pub_start_month) <= int(start_month):
-                                                                logger.fdebug('[Year:%s] issue publication month of %s is after the start imprint date of %s' % (comic['ComicYear'], start_month, pub_start_month))
-                                                                found = True
-                                                            else:
-                                                                found = False
+    givb = get_imprint_volume_and_booktype(series, comic['ComicYear'], comic['ComicPublisher'], comic['FirstIssueID'], comic_desc, comic_deck)
+    if givb:
+        comic['ComicPublisher'] = givb['ComicPublisher']
+        comic['PublisherImprint'] = givb['PublisherImprint']
+        comic['ComicDescription'] = givb['ComicDescription']
+        comic['ComicVersion'] = givb['ComicVersion']
+        comic['Type'] = givb['Type']
+        comic['incorrect_volume'] = givb['incorrect_volume']
+    #if series is True:
+    #    # this is a really crappy way to do it - it works, but meh.
+    #    try:
+    #        for k,v in mylar.PUBLISHER_IMPRINTS.items():
+    #            if k == 'publishers':
+    #                for b in v:
+    #                    for d,e in b.items():
+    #                        for g in e:
+    #                            chkyear = False
+    #                            for f,h in g.items():
+    #                                if f == 'name':
+    #                                    pubname = h
+    #                                if f == 'publication_run' and chkyear is True:
+    #                                    pubrun = h
+    #                                    y = pubrun.find('-')
+    #                                    pub_start = pubrun[:y][:4].strip()
+    #                                    pub_start_month = pubrun[:y][pubrun.find('.')+1:].strip()
+    #                                    pub_end = pubrun[y+2:][:4].strip()
+    #                                    if len(pub_end) == 0 and len(pub_start) == 0:
+    #                                        chkyear = False
+    #                                        found = False
+    #                                        continue
+    #                                    elif len(pub_end) == 0:
+    #                                        pub_end = None
+    #                                        if int(comic['ComicYear']) <= int(pub_start[:4]):
+    #                                            logger.info('comic year of %s is prior to imprint publication date of %s' % (comic['ComicYear'], pub_start[:4]))
+    #                                            comic['ComicPublisher'] = None
+    #                                            comic['PublisherImprint'] = None
+    #                                            found = False
+    #                                        else:
+    #                                            found = True
+    #                                    else:
+    #                                        if int(pub_end[:4]) > int(comic['ComicYear'])  > int(pub_start[:4]):
+    #                                            found = True
+    #                                        else:
+    #                                            pub_end_month = pubrun[y+2:][pubrun.find('.',y+2)+1:].strip()
+    #                                            if any([ int(pub_end[:4]) == int(comic['ComicYear']), int(pub_start[:4]) == int(comic['ComicYear']) ]):
+    #                                                quick_chk = getComic(comicid=None, rtype='imprints_first', issueid=comic['FirstIssueID'])
+    #                                                if quick_chk:
+    #                                                    cdate = None
+    #                                                    sdate = None
+    #                                                    #quick_chk['store_date'], quick_chk['cover_date']
+    #                                                    if quick_chk['cover_date'] and quick_chk['cover_date'] != '0000':
+    #                                                        cdate = quick_chk['cover_date'][5:7]
+    #                                                    if quick_chk['store_date'] and quick_chk['store_date'] != '0000':
+    #                                                        sdate = quick_chk['store_date'][5:7]
 
-                                                else:
-                                                    logger.info('comic year of %s is not within the imprint publication date range of %s - %s' % (comic['ComicYear'], pub_start[:4], pub_end[:4]))
-                                                    comicPublisher = None
-                                                    publisherImprint = None
-                                                    found = False
-                                        chkyear = False
+    #                                                    if int(pub_end[:4]) == int(comic['ComicYear']):
+    #                                                        if cdate != None:
+    #                                                            end_month = cdate
+    #                                                        else:
+    #                                                            end_month = sdate
+    #                                                        if int(pub_end_month) <= int(end_month):
+    #                                                            logger.fdebug('[Year;%s] publication month of %s is before the end imprint date of %s' % (comic['ComicYear'], end_month, pub_end_month))
+    #                                                            found = True
+    #                                                        else:
+    #                                                            found = False
 
-                                    elif f == 'imprints' and h is not None:
-                                        # if we get here, it's an imprint of an imprint
-                                        for i in h:
-                                            if i['name'].lower() == comic['ComicPublisher'].lower():
-                                                logger.info('imprint matched: %s ---> %s' % (i['name'],h))
-                                                comicPublisher = pubname
-                                                publisherImprint = i['name']
-                                                found = True
-                                                break
-                                    elif all([f != 'imprints', f != 'publication_run']) and h is not None and found is not True:
-                                        if h.lower() == comic['ComicPublisher'].lower():
-                                            logger.info('imprint matched: %s ---> %s' % (d, h))
-                                            comicPublisher = d
-                                            publisherImprint = h
-                                            chkyear = True
-                                            found = True
+    #                                                    elif int(pub_start[:4]) == int(comic['ComicYear']):
+    #                                                        if cdate != None:
+    #                                                            start_month = cdate
+    #                                                        else:
+    #                                                            start_month = sdate
+    #                                                        if int(pub_start_month) <= int(start_month):
+    #                                                            logger.fdebug('[Year:%s] issue publication month of %s is after the start imprint date of %s' % (comic['ComicYear'], start_month, pub_start_month))
+    #                                                            found = True
+    #                                                        else:
+    #                                                            found = False
 
-                                if found is True:
-                                    break
-                            if found is True:
-                                break
-                        if found is True:
-                            break
-        except Exception as e:
-            logger.error('error: %s' % e)
+    #                                            else:
+    #                                                logger.info('comic year of %s is not within the imprint publication date range of %s - %s' % (comic['ComicYear'], pub_start[:4], pub_end[:4]))
+    #                                                comicPublisher = None
+    #                                                publisherImprint = None
+    #                                                found = False
+    #                                    chkyear = False
 
-    if comicPublisher is not None:
-        comic['ComicPublisher'] = comicPublisher
-    comic['PublisherImprint'] = publisherImprint
+    #                                elif f == 'imprints' and h is not None:
+    #                                    # if we get here, it's an imprint of an imprint
+    #                                    for i in h:
+    #                                        if i['name'].lower() == comic['ComicPublisher'].lower():
+    #                                            logger.info('imprint matched: %s ---> %s' % (i['name'],h))
+    #                                            comicPublisher = pubname
+    #                                            publisherImprint = i['name']
+    #                                            found = True
+    #                                            break
+    #                                elif all([f != 'imprints', f != 'publication_run']) and h is not None and found is not True:
+    #                                    if h.lower() == comic['ComicPublisher'].lower():
+    #                                        logger.info('imprint matched: %s ---> %s' % (d, h))
+    #                                        comicPublisher = d
+    #                                        publisherImprint = h
+    #                                        chkyear = True
+    #                                        found = True
+
+    #                            if found is True:
+    #                                break
+    #                        if found is True:
+    #                            break
+    #                    if found is True:
+    #                        break
+    #    except Exception as e:
+    #        logger.error('error: %s' % e)
+
+    #if comicPublisher is not None:
+    #    comic['ComicPublisher'] = comicPublisher
+    #comic['PublisherImprint'] = publisherImprint
 
     try:
         comic['ComicURL'] = dom.getElementsByTagName('site_detail_url')[trackcnt].firstChild.wholeText
@@ -496,27 +527,27 @@ def GetComicInfo(comicid, dom, safechk=None, series=False):
         safechk +=1
         GetComicInfo(comicid, dom, safechk)
 
-    desdeck = 0
+    #desdeck = 0
     #the description field actually holds the Volume# - so let's grab it
-    desc_soup = None
-    try:
-        descchunk = dom.getElementsByTagName('description')[0].firstChild.wholeText
-        desc_soup = Soup(descchunk, "html.parser")
-        desclinks = desc_soup.findAll('a')
-        comic_desc = drophtml(descchunk)
-        desdeck +=1
-    except:
-        comic_desc = 'None'
+    #desc_soup = None
+    #try:
+    #    descchunk = dom.getElementsByTagName('description')[0].firstChild.wholeText
+    #    desc_soup = Soup(descchunk, "html.parser")
+    #    desclinks = desc_soup.findAll('a')
+    #    comic_desc = drophtml(descchunk)
+    #    desdeck +=1
+    #except:
+    #    comic_desc = 'None'
 
     #sometimes the deck has volume labels
-    try:
-        deckchunk = dom.getElementsByTagName('deck')[0].firstChild.wholeText
-        comic_deck = deckchunk
-        desdeck +=1
-    except:
-        comic_deck = 'None'
+    #try:
+    #    deckchunk = dom.getElementsByTagName('deck')[0].firstChild.wholeText
+    #    comic_deck = deckchunk
+    #    desdeck +=1
+    #except:
+    #    comic_deck = 'None'
 
-    comic['ComicDescription'] = comic_desc
+    #comic['ComicDescription'] = comic_desc
 
     try:
         comic['Aliases'] = dom.getElementsByTagName('aliases')[0].firstChild.wholeText
@@ -527,59 +558,59 @@ def GetComicInfo(comicid, dom, safechk=None, series=False):
     except:
         comic['Aliases'] = 'None'
 
-    comic['ComicVersion'] = 'None' #noversion'
+    #comic['ComicVersion'] = 'None' #noversion'
 
     #figure out if it's a print / digital edition.
-    comic['Type'] = 'None'
-    if comic_deck != 'None':
-        if any(['print' in comic_deck.lower(), 'digital' in comic_deck.lower(), 'paperback' in comic_deck.lower(), 'one shot' in re.sub('-', '', comic_deck.lower()).strip(), 'hardcover' in comic_deck.lower()]):
-            if all(['print' in comic_deck.lower(), 'reprint' not in comic_deck.lower()]):
-                comic['Type'] = 'Print'
-            elif 'digital' in comic_deck.lower():
-                comic['Type'] = 'Digital'
-            elif 'paperback' in comic_deck.lower():
-                comic['Type'] = 'TPB'
-            elif 'graphic novel' in comic_deck.lower():
-                comic['Type'] = 'GN'
-            elif 'hardcover' in comic_deck.lower():
-                comic['Type'] = 'HC'
-            elif 'oneshot' in re.sub('-', '', comic_deck.lower()).strip():
-                comic['Type'] = 'One-Shot'
-            else:
-                comic['Type'] = 'Print'
+    #comic['Type'] = 'None'
+    #if comic_deck != 'None':
+    #    if any(['print' in comic_deck.lower(), 'digital' in comic_deck.lower(), 'paperback' in comic_deck.lower(), 'one shot' in re.sub('-', '', comic_deck.lower()).strip(), 'hardcover' in comic_deck.lower()]):
+    #        if all(['print' in comic_deck.lower(), 'reprint' not in comic_deck.lower()]):
+    #            comic['Type'] = 'Print'
+    #        elif 'digital' in comic_deck.lower():
+    #            comic['Type'] = 'Digital'
+    #        elif 'paperback' in comic_deck.lower():
+    #            comic['Type'] = 'TPB'
+    #        elif 'graphic novel' in comic_deck.lower():
+    #            comic['Type'] = 'GN'
+    #        elif 'hardcover' in comic_deck.lower():
+    #            comic['Type'] = 'HC'
+    #        elif 'oneshot' in re.sub('-', '', comic_deck.lower()).strip():
+    #            comic['Type'] = 'One-Shot'
+    #        else:
+    #            comic['Type'] = 'Print'
 
-    if comic_desc != 'None' and comic['Type'] == 'None':
-        if 'print' in comic_desc[:60].lower() and all(['also available as a print' not in comic_desc.lower(), 'for the printed edition' not in comic_desc.lower(), 'print edition can be found' not in comic_desc.lower(), 'reprints' not in comic_desc.lower()]):
-            comic['Type'] = 'Print'
-        elif all(['digital' in comic_desc[:60].lower(), 'graphic novel' not in comic_desc[:60].lower(), 'digital edition can be found' not in comic_desc.lower()]):
-            comic['Type'] = 'Digital'
-        elif all(['paperback' in comic_desc[:60].lower(), 'paperback can be found' not in comic_desc.lower()]) or all(['hardcover' not in comic_desc[:60].lower(), 'collects' in comic_desc[:60].lower()]):
-            comic['Type'] = 'TPB'
-        elif all(['graphic novel' in comic_desc[:60].lower(), 'graphic novel can be found' not in comic_desc.lower()]):
-            comic['Type'] = 'GN'
-        elif 'hardcover' in comic_desc[:60].lower() and 'hardcover can be found' not in comic_desc.lower():
-            comic['Type'] = 'HC'
-        elif any(['one-shot' in comic_desc[:60].lower(), 'one shot' in comic_desc[:60].lower()]) and any(['can be found' not in comic_desc.lower(), 'following the' not in comic_desc.lower(), 'after the' not in comic_desc.lower()]):
-            i = 0
-            comic['Type'] = 'One-Shot'
-            avoidwords = ['preceding', 'after the', 'following the', 'continued from']
-            while i < 2:
-                if i == 0:
-                    cbd = 'one-shot'
-                elif i == 1:
-                    cbd = 'one shot'
-                tmp1 = comic_desc[:60].lower().find(cbd)
-                if tmp1 != -1:
-                    for x in avoidwords:
-                        tmp2 = comic_desc[:tmp1].lower().find(x)
-                        if tmp2 != -1:
-                            logger.fdebug('FAKE NEWS: caught incorrect reference to one-shot. Forcing to Print')
-                            comic['Type'] = 'Print'
-                            i = 3
-                            break
-                i+=1
-        else:
-            comic['Type'] = 'Print'
+    #if comic_desc != 'None' and comic['Type'] == 'None':
+    #    if 'print' in comic_desc[:60].lower() and all(['also available as a print' not in comic_desc.lower(), 'for the printed edition' not in comic_desc.lower(), 'print edition can be found' not in comic_desc.lower(), 'reprints' not in comic_desc.lower()]):
+    #        comic['Type'] = 'Print'
+    #    elif all(['digital' in comic_desc[:60].lower(), 'graphic novel' not in comic_desc[:60].lower(), 'digital edition can be found' not in comic_desc.lower()]):
+    #        comic['Type'] = 'Digital'
+    #    elif all(['paperback' in comic_desc[:60].lower(), 'paperback can be found' not in comic_desc.lower()]) or all(['hardcover' not in comic_desc[:60].lower(), 'collects' in comic_desc[:60].lower()]):
+    #        comic['Type'] = 'TPB'
+    #    elif all(['graphic novel' in comic_desc[:60].lower(), 'graphic novel can be found' not in comic_desc.lower()]):
+    #        comic['Type'] = 'GN'
+    #    elif 'hardcover' in comic_desc[:60].lower() and 'hardcover can be found' not in comic_desc.lower():
+    #        comic['Type'] = 'HC'
+    #    elif any(['one-shot' in comic_desc[:60].lower(), 'one shot' in comic_desc[:60].lower()]) and any(['can be found' not in comic_desc.lower(), 'following the' not in comic_desc.lower(), 'after the' not in comic_desc.lower()]):
+    #        i = 0
+    #        comic['Type'] = 'One-Shot'
+    #        avoidwords = ['preceding', 'after the', 'following the', 'continued from']
+    #        while i < 2:
+    #            if i == 0:
+    #                cbd = 'one-shot'
+    #            elif i == 1:
+    #                cbd = 'one shot'
+    #            tmp1 = comic_desc[:60].lower().find(cbd)
+    #            if tmp1 != -1:
+    #                for x in avoidwords:
+    #                    tmp2 = comic_desc[:tmp1].lower().find(x)
+    #                    if tmp2 != -1:
+    #                        logger.fdebug('FAKE NEWS: caught incorrect reference to one-shot. Forcing to Print')
+    #                        comic['Type'] = 'Print'
+    #                        i = 3
+    #                        break
+    #            i+=1
+    #    else:
+    #        comic['Type'] = 'Print'
 
     if all([comic_desc != 'None', 'trade paperback' in comic_desc[:30].lower(), 'collecting' in comic_desc[:40].lower()]):
         #ie. Trade paperback collecting Marvel Team-Up #9-11, 48-51, 72, 110 & 145.
@@ -601,7 +632,7 @@ def GetComicInfo(comicid, dom, safechk=None, series=False):
         for fc in desclinks:
             try:
                 fc_id = fc['data-ref-id']
-            except:
+            except Exception:
                 continue
 
             if fc_id in micdrop:
@@ -662,96 +693,96 @@ def GetComicInfo(comicid, dom, safechk=None, series=False):
     else:
         comic['Issue_List'] = 'None'
 
-    comic['incorrect_volume'] = None
-    while (desdeck > 0):
-        if desdeck == 1:
-            if comic_desc == 'None':
-                comicDes = comic_deck[:30]
-            else:
-                #extract the first 60 characters
-                comicDes = comic_desc[:60].replace('New 52', '')
-        elif desdeck == 2:
-            #extract the characters from the deck
-            comicDes = comic_deck[:30].replace('New 52', '')
-        else:
-            break
+    #comic['incorrect_volume'] = None
+    #while (desdeck > 0):
+    #    if desdeck == 1:
+    #        if comic_desc == 'None':
+    #            comicDes = comic_deck[:30]
+    #        else:
+    #            #extract the first 60 characters
+    #            comicDes = comic_desc[:60].replace('New 52', '')
+    #    elif desdeck == 2:
+    #        #extract the characters from the deck
+    #        comicDes = comic_deck[:30].replace('New 52', '')
+    #    else:
+    #        break
 
-        i = 0
-        while (i < 2):
-            incorrect_volume = None
-            if 'volume' in comicDes.lower():
-                #found volume - let's grab it.
-                v_find = comicDes.lower().find('volume')
-                #arbitrarily grab the next 10 chars (6 for volume + 1 for space + 3 for the actual vol #)
-                #increased to 10 to allow for text numbering (+5 max)
-                #sometimes it's volume 5 and ocassionally it's fifth volume.
-                if 'collected' in comicDes.lower():
-                    cde = re.sub(r'[\s\-]', '', comicDes).strip().lower()
-                    if (
-                           'oneshot' in cde[:cde.find('collected')]
-                           and cde.find('volume') > cde.find('collected')
-                    ):
-                        # we set the incorrect_volume here so that when it returns to update the db we can
-                        # check to see if it matches the existing volume and if so replace it with any new
-                        # values since the incorrect volume is incorrect.
-                        incorrect_volume = comicDes[v_find:v_find+15]
-                if comicDes[v_find+7:comicDes.find(' ', v_find+7)].isdigit():
-                    comic['ComicVersion'] = re.sub("[^0-9]", "", comicDes[v_find+7:comicDes.find(' ', v_find+7)]).strip()
-                    break
-                elif i == 0:
-                    vfind = comicDes[v_find:v_find +15]   #if it's volume 5 format
-                    basenums = {'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10', 'i': '1', 'ii': '2', 'iii': '3', 'iv': '4', 'v': '5'}
-                    logger.fdebug('volume X format - ' + str(i) + ': ' + vfind)
-                else:
-                    vfind = comicDes[:v_find]   # if it's fifth volume format
-                    basenums = {'zero': '0', 'first': '1', 'second': '2', 'third': '3', 'fourth': '4', 'fifth': '5', 'sixth': '6', 'seventh': '7', 'eighth': '8', 'nineth': '9', 'tenth': '10', 'i': '1', 'ii': '2', 'iii': '3', 'iv': '4', 'v': '5'}
-                    logger.fdebug('X volume format - ' + str(i) + ': ' + vfind)
-                og_vfind = vfind
-                volconv = ''
-                for nums in basenums:
-                    if nums in vfind.lower():
-                        sconv = basenums[nums]
-                        vfind = re.sub(nums, sconv, vfind.lower())
-                        break
-                #logger.info('volconv: ' + str(volconv))
+    #    i = 0
+    #    while (i < 2):
+    #        incorrect_volume = None
+    #        if 'volume' in comicDes.lower():
+    #            #found volume - let's grab it.
+    #            v_find = comicDes.lower().find('volume')
+    #            #arbitrarily grab the next 10 chars (6 for volume + 1 for space + 3 for the actual vol #)
+    #            #increased to 10 to allow for text numbering (+5 max)
+    #            #sometimes it's volume 5 and ocassionally it's fifth volume.
+    #            if 'collected' in comicDes.lower():
+    #                cde = re.sub(r'[\s\-]', '', comicDes).strip().lower()
+    #                if (
+    #                       'oneshot' in cde[:cde.find('collected')]
+    #                       and cde.find('volume') > cde.find('collected')
+    #                ):
+    #                    # we set the incorrect_volume here so that when it returns to update the db we can
+    #                    # check to see if it matches the existing volume and if so replace it with any new
+    #                    # values since the incorrect volume is incorrect.
+    #                    incorrect_volume = comicDes[v_find:v_find+15]
+    #            if comicDes[v_find+7:comicDes.find(' ', v_find+7)].isdigit():
+    #                comic['ComicVersion'] = re.sub("[^0-9]", "", comicDes[v_find+7:comicDes.find(' ', v_find+7)]).strip()
+    #                break
+    #            elif i == 0:
+    #                vfind = comicDes[v_find:v_find +15]   #if it's volume 5 format
+    #                basenums = {'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10', 'i': '1', 'ii': '2', 'iii': '3', 'iv': '4', 'v': '5'}
+    #                logger.fdebug('volume X format - ' + str(i) + ': ' + vfind)
+    #            else:
+    #                vfind = comicDes[:v_find]   # if it's fifth volume format
+    #                basenums = {'zero': '0', 'first': '1', 'second': '2', 'third': '3', 'fourth': '4', 'fifth': '5', 'sixth': '6', 'seventh': '7', 'eighth': '8', 'nineth': '9', 'tenth': '10', 'i': '1', 'ii': '2', 'iii': '3', 'iv': '4', 'v': '5'}
+    #                logger.fdebug('X volume format - ' + str(i) + ': ' + vfind)
+    #            og_vfind = vfind
+    #            volconv = ''
+    #            for nums in basenums:
+    #                if nums in vfind.lower():
+    #                    sconv = basenums[nums]
+    #                    vfind = re.sub(nums, sconv, vfind.lower())
+    #                    break
+    #            #logger.info('volconv: ' + str(volconv))
 
-                #now we attempt to find the character position after the word 'volume'
-                if i == 0:
-                    volthis = vfind.lower().find('volume')
-                    volthis = volthis + 6  # add on the actual word to the position so that we can grab the subsequent digit
-                    vfind = vfind[volthis:volthis + 4]  # grab the next 4 characters ;)
-                elif i == 1:
-                    volthis = vfind.lower().find('volume')
-                    vfind = vfind[volthis - 4:volthis]  # grab the next 4 characters ;)
+    #            #now we attempt to find the character position after the word 'volume'
+    #            if i == 0:
+    #                volthis = vfind.lower().find('volume')
+    #                volthis = volthis + 6  # add on the actual word to the position so that we can grab the subsequent digit
+    #                vfind = vfind[volthis:volthis + 4]  # grab the next 4 characters ;)
+    #            elif i == 1:
+    #                volthis = vfind.lower().find('volume')
+    #                vfind = vfind[volthis - 4:volthis]  # grab the next 4 characters ;)
 
-                if '(' in vfind:
-                    #bracket detected in versioning'
-                    vfindit = re.findall('[^()]+', vfind)
-                    vfind = vfindit[0]
-                vf = re.findall('[^<>]+', vfind)
-                try:
-                    ledigit = re.sub("[^0-9]", "", vf[0])
-                    if ledigit != '':
-                        #logger.info('incorrect_volume: %s / vfind: %s' % (incorrect_volume, og_vfind))
-                        if all([incorrect_volume is not None, incorrect_volume == og_vfind]):
-                            logger.fdebug('previous incorrect volume possible. Assigning incorrect value as: %s' % ledigit)
-                            comic['incorrect_volume'] = ledigit
-                        else:
-                            comic['ComicVersion'] = ledigit
-                            logger.fdebug("Volume information found! Adding to series record : volume " + comic['ComicVersion'])
-                            break
-                except:
-                    pass
+    #            if '(' in vfind:
+    #                #bracket detected in versioning'
+    #                vfindit = re.findall('[^()]+', vfind)
+    #                vfind = vfindit[0]
+    #            vf = re.findall('[^<>]+', vfind)
+    #            try:
+    #                ledigit = re.sub("[^0-9]", "", vf[0])
+    #                if ledigit != '':
+    #                    #logger.info('incorrect_volume: %s / vfind: %s' % (incorrect_volume, og_vfind))
+    #                    if all([incorrect_volume is not None, incorrect_volume == og_vfind]):
+    #                        logger.fdebug('previous incorrect volume possible. Assigning incorrect value as: %s' % ledigit)
+    #                        comic['incorrect_volume'] = ledigit
+    #                    else:
+    #                        comic['ComicVersion'] = ledigit
+    #                        logger.fdebug("Volume information found! Adding to series record : volume " + comic['ComicVersion'])
+    #                        break
+    #            except:
+    #                pass
 
-                i += 1
-            else:
-                i += 1
+    #            i += 1
+    #        else:
+    #            i += 1
 
-        if comic['ComicVersion'] == 'None':
-            logger.fdebug('comic[ComicVersion]:' + str(comic['ComicVersion']))
-            desdeck -= 1
-        else:
-            break
+    #    if comic['ComicVersion'] == 'None':
+    #        logger.fdebug('comic[ComicVersion]:' + str(comic['ComicVersion']))
+    #        desdeck -= 1
+    #    else:
+    #        break
 
     if vari == "yes":
         comic['ComicIssues'] = str(cntit)
@@ -776,6 +807,10 @@ def GetComicInfo(comicid, dom, safechk=None, series=False):
     except:
         comic['ComicImageThumbnail'] = 'None'
 
+    try:
+        comic['ComicThumbURL'] = dom.getElementsByTagName('thumb_url')[0].firstChild.wholeText
+    except:
+        comic['ComicThumbURL'] = 'None'
 
     #logger.info('comic: %s' % comic)
     return comic
@@ -819,6 +854,7 @@ def GetIssuesInfo(comicid, dom, arcid=None):
                 while (tot < totnames):
                     if subtrack.getElementsByTagName('name')[tot].parentNode.nodeName == 'volume':
                         tempissue['ComicName'] = subtrack.getElementsByTagName('name')[tot].firstChild.wholeText
+                        tempissue['ComicName'] = tempissue['ComicName'].strip()
                     elif subtrack.getElementsByTagName('name')[tot].parentNode.nodeName == 'issue':
                         try:
                             tempissue['Issue_Name'] = subtrack.getElementsByTagName('name')[tot].firstChild.wholeText
@@ -867,7 +903,8 @@ def GetIssuesInfo(comicid, dom, arcid=None):
                 logger.fdebug('No Issue Number available - Trade Paperbacks, Graphic Novels and Compendiums are not supported as of yet.')
             else:
                 tempissue['Issue_Number'] = tempissue['Issue_Number'].strip()
-
+                if 'Issue #' in tempissue['Issue_Number']:
+                    tempissue['Issue_Number'] = re.sub('Issue #', '', tempissue['Issue_Number']).strip()
             try:
                 tempissue['ComicImage'] = subtrack.getElementsByTagName('small_url')[0].firstChild.wholeText
             except:
@@ -981,6 +1018,7 @@ def GetSeriesYears(dom):
             while (namesc < totnames):
                 if dm.getElementsByTagName('name')[namesc].parentNode.nodeName == 'volume':
                     tempseries['Series'] = dm.getElementsByTagName('name')[namesc].firstChild.wholeText
+                    tempseries['Series'] = tempseries['Series'].strip()
                 elif dm.getElementsByTagName('name')[namesc].parentNode.nodeName == 'publisher':
                     tempseries['Publisher'] = dm.getElementsByTagName('name')[namesc].firstChild.wholeText
                 namesc+=1
@@ -1100,9 +1138,11 @@ def GetSeriesYears(dom):
                             micdrop.append(mic_check['data-ref-id'])
 
             for fc in desclinks:
-                #logger.info('fc: %s'  % fc)
-                fc_id = fc['data-ref-id']
-                #logger.info('fc_id: %s'  % fc_id)
+                try:
+                    fc_id = fc['data-ref-id']
+                except Exception:
+                    continue
+
                 if fc_id in micdrop:
                     continue
                 fc_name = fc.findNext(text=True)
@@ -1301,6 +1341,10 @@ def UpdateDates(dom):
         except:
             logger.fdebug('No Issue Number available - Trade Paperbacks, Graphic Novels and Compendiums are not supported as of yet.')
             tempissue['IssueNumber'] = 'None'
+        else:
+            if 'Issue #' in tempissue['IssueNumber']:
+                tempissue['IssueNumber'] = re.sub('Issue #', '', tempissue['IssueNumber']).strip()
+
         try:
             tempissue['date_last_updated'] = dm.getElementsByTagName('date_last_updated')[0].firstChild.wholeText
         except:
@@ -1334,6 +1378,11 @@ def singleIssue(results):
         issue_info['issueid'] = data['id']
         issue_info['image'] = data['image']['medium_url'] #/ ['screen_url'] / ['screen_large_url'] / ['original_url']
         issue_info['issue_number'] = data['issue_number']
+        try:
+            if 'Issue #' in issue_info['issue_number']:
+                issue_info['issue_number'] = re.sub('Issue #', '', issue_info['issue_number']).strip()
+        except Exception:
+            pass
         for x in data['person_credits']:
             issuecredits.append({'role': x['role'], 'name': x['name']})
         issue_info['credits'] = issuecredits
@@ -1364,6 +1413,7 @@ def GetImportList(results):
             while (tot < totnames):
                 if implist.getElementsByTagName('name')[tot].parentNode.nodeName == 'volume':
                     tempseries['ComicName'] = implist.getElementsByTagName('name')[tot].firstChild.wholeText
+                    tempseries['ComicName'] = tempseries['ComicName'].strip()
                 elif implist.getElementsByTagName('name')[tot].parentNode.nodeName == 'issue':
                     try:
                         tempseries['Issue_Name'] = implist.getElementsByTagName('name')[tot].firstChild.wholeText
@@ -1377,6 +1427,9 @@ def GetImportList(results):
             tempseries['Issue_Number'] = implist.getElementsByTagName('issue_number')[0].firstChild.wholeText
         except:
             logger.fdebug('No Issue Number available - Trade Paperbacks, Graphic Novels and Compendiums are not supported as of yet.')
+        else:
+            if 'Issue #' in tempseries['Issue_Number']:
+                tempseries['Issue_Number'] = re.sub('Issue #', '', tempseries['Issue_Number']).strip()
 
         logger.info('tempseries:' + str(tempseries))
         serieslist.append({"ComicID":      tempseries['ComicID'],
@@ -1426,3 +1479,292 @@ def drophtml(html):
         return ''.join(text_parts)
     else:
         return ''
+
+def get_imprint_volume_and_booktype(series, comicyear, publisher, firstissueid, description, deck, annual_check=False):
+    # this is used to quick_load the imprint, volume and booktype of a specific issue (ie. searchresults editing a result)
+    comic = {}
+
+    comic['ComicYear'] = comicyear
+    if any([comicyear[-1:] == '-', comicyear[-1:] == '?']):
+        comic['ComicYear'] = comicyear[:-1]
+
+    found = False
+    comic['ComicPublisher'] = publisher
+    comicPublisher = publisher
+    publisherImprint= None
+
+    if series is True:
+        # this is a really crappy way to do it - it works, but meh.
+        try:
+            for k,v in mylar.PUBLISHER_IMPRINTS.items():
+                if k == 'publishers':
+                    for b in v:
+                        for d,e in b.items():
+                            for g in e:
+                                chkyear = False
+                                for f,h in g.items():
+                                    if f == 'name':
+                                        pubname = h
+                                    if f == 'publication_run' and chkyear is True:
+                                        pubrun = h
+                                        y = pubrun.find('-')
+                                        pub_start = pubrun[:y][:4].strip()
+                                        pub_start_month = pubrun[:y][pubrun.find('.')+1:].strip()
+                                        pub_end = pubrun[y+2:][:4].strip()
+                                        if len(pub_end) == 0 and len(pub_start) == 0:
+                                            chkyear = False
+                                            found = False
+                                            continue
+                                        elif len(pub_end) == 0:
+                                            pub_end = None
+                                            if int(comic['ComicYear']) <= int(pub_start[:4]):
+                                                logger.info('comic year of %s is prior to imprint publication date of %s' % (comic['ComicYear'], pub_start[:4]))
+                                                comic['ComicPublisher'] = None
+                                                comic['PublisherImprint'] = None
+                                                found = False
+                                            else:
+                                                found = True
+                                        else:
+                                            if int(pub_end[:4]) > int(comic['ComicYear'])  > int(pub_start[:4]):
+                                                found = True
+                                            else:
+                                                pub_end_month = pubrun[y+2:][pubrun.find('.',y+2)+1:].strip()
+                                                if any([ int(pub_end[:4]) == int(comic['ComicYear']), int(pub_start[:4]) == int(comic['ComicYear']) ]):
+                                                    quick_chk = getComic(comicid=None, rtype='imprints_first', issueid=firstissueid)
+                                                    if quick_chk:
+                                                        cdate = None
+                                                        sdate = None
+                                                        #quick_chk['store_date'], quick_chk['cover_date']
+                                                        if quick_chk['cover_date'] and quick_chk['cover_date'] != '0000':
+                                                            cdate = quick_chk['cover_date'][5:7]
+                                                        if quick_chk['store_date'] and quick_chk['store_date'] != '0000':
+                                                            sdate = quick_chk['store_date'][5:7]
+
+                                                        if int(pub_end[:4]) == int(comic['ComicYear']):
+                                                            if cdate != None:
+                                                                end_month = cdate
+                                                            else:
+                                                                end_month = sdate
+                                                            if int(pub_end_month) <= int(end_month):
+                                                                logger.fdebug('[Year;%s] publication month of %s is before the end imprint date of %s' % (comic['ComicYear'], end_month, pub_end_month))
+                                                                found = True
+                                                            else:
+                                                                found = False
+
+                                                        elif int(pub_start[:4]) == int(comic['ComicYear']):
+                                                            if cdate != None:
+                                                                start_month = cdate
+                                                            else:
+                                                                start_month = sdate
+                                                            if int(pub_start_month) <= int(start_month):
+                                                                logger.fdebug('[Year:%s] issue publication month of %s is after the start imprint date of %s' % (comic['ComicYear'], start_month, pub_start_month))
+                                                                found = True
+                                                            else:
+                                                                found = False
+
+                                                else:
+                                                    logger.info('comic year of %s is not within the imprint publication date range of %s - %s' % (comic['ComicYear'], pub_start[:4], pub_end[:4]))
+                                                    comicPublisher = None
+                                                    publisherImprint = None
+                                                    found = False
+                                        chkyear = False
+
+                                    elif f == 'imprints' and h is not None:
+                                        # if we get here, it's an imprint of an imprint
+                                        for i in h:
+                                            if i['name'].lower() == comic['ComicPublisher'].lower():
+                                                logger.info('imprint matched: %s ---> %s' % (i['name'],h))
+                                                comicPublisher = pubname
+                                                publisherImprint = i['name']
+                                                found = True
+                                                break
+                                    elif all([f != 'imprints', f != 'publication_run']) and h is not None and found is not True:
+                                        if h.lower() == comic['ComicPublisher'].lower():
+                                            logger.info('imprint matched: %s ---> %s' % (d, h))
+                                            comicPublisher = d
+                                            publisherImprint = h
+                                            chkyear = True
+                                            found = True
+
+                                if found is True:
+                                    break
+                            if found is True:
+                                break
+                        if found is True:
+                            break
+        except Exception as e:
+            logger.error('error: %s' % e)
+
+    if comicPublisher is not None:
+        comic['ComicPublisher'] = comicPublisher
+    comic['PublisherImprint'] = publisherImprint
+
+    desdeck = 0
+    #the description field actually holds the Volume# - so let's grab it
+    try:
+        if annual_check is False:
+            comic_desc = drophtml(description)
+        else:
+            comic_desc = description
+        desdeck +=1
+    except:
+        comic_desc = 'None'
+
+    #sometimes the deck has volume labels
+    try:
+        comic_deck = deck
+        desdeck +=1
+    except:
+        comic_deck = 'None'
+
+    comic['ComicDescription'] = comic_desc
+
+    comic['ComicVersion'] = 'None' #noversion'
+
+    #figure out if it's a print / digital edition.
+    comic['Type'] = 'None'
+    if comic_deck != 'None':
+        if any(['print' in comic_deck.lower(), 'digital' in comic_deck.lower(), 'paperback' in comic_deck.lower(), 'one shot' in re.sub('-', '', comic_deck.lower()).strip(), 'hardcover' in comic_deck.lower()]):
+            if all(['print' in comic_deck.lower(), 'reprint' not in comic_deck.lower()]):
+                comic['Type'] = 'Print'
+            elif 'digital' in comic_deck.lower():
+                comic['Type'] = 'Digital'
+            elif 'paperback' in comic_deck.lower():
+                comic['Type'] = 'TPB'
+            elif 'graphic novel' in comic_deck.lower():
+                comic['Type'] = 'GN'
+            elif 'hardcover' in comic_deck.lower():
+                comic['Type'] = 'HC'
+            elif 'oneshot' in re.sub('-', '', comic_deck.lower()).strip():
+                comic['Type'] = 'One-Shot'
+            else:
+                comic['Type'] = 'Print'
+
+    if comic_desc != 'None' and comic['Type'] == 'None':
+        if 'print' in comic_desc[:60].lower() and all(['also available as a print' not in comic_desc.lower(), 'for the printed edition' not in comic_desc.lower(), 'print edition can be found' not in comic_desc.lower(), 'reprints' not in comic_desc.lower()]):
+            comic['Type'] = 'Print'
+        elif all(['digital' in comic_desc[:60].lower(), 'graphic novel' not in comic_desc[:60].lower(), 'digital edition can be found' not in comic_desc.lower()]):
+            comic['Type'] = 'Digital'
+        elif all(['paperback' in comic_desc[:60].lower(), 'paperback can be found' not in comic_desc.lower()]) or all(['hardcover' not in comic_desc[:60].lower(), 'collects' in comic_desc[:60].lower()]):
+            comic['Type'] = 'TPB'
+        elif all(['graphic novel' in comic_desc[:60].lower(), 'graphic novel can be found' not in comic_desc.lower()]):
+            comic['Type'] = 'GN'
+        elif 'hardcover' in comic_desc[:60].lower() and 'hardcover can be found' not in comic_desc.lower():
+            comic['Type'] = 'HC'
+        elif any(['one-shot' in comic_desc[:60].lower(), 'one shot' in comic_desc[:60].lower()]) and any(['can be found' not in comic_desc.lower(), 'following the' not in comic_desc.lower(), 'after the' not in comic_desc.lower()]):
+            i = 0
+            comic['Type'] = 'One-Shot'
+            avoidwords = ['preceding', 'after the', 'following the', 'continued from']
+            while i < 2:
+                if i == 0:
+                    cbd = 'one-shot'
+                elif i == 1:
+                    cbd = 'one shot'
+                tmp1 = comic_desc[:60].lower().find(cbd)
+                if tmp1 != -1:
+                    for x in avoidwords:
+                        tmp2 = comic_desc[:tmp1].lower().find(x)
+                        if tmp2 != -1:
+                            logger.fdebug('FAKE NEWS: caught incorrect reference to one-shot. Forcing to Print')
+                            comic['Type'] = 'Print'
+                            i = 3
+                            break
+                i+=1
+        else:
+            comic['Type'] = 'Print'
+
+    comic['incorrect_volume'] = None
+    while (desdeck > 0):
+        if desdeck == 1:
+            if comic_desc == 'None':
+                comicDes = comic_deck[:30]
+            else:
+                #extract the first 60 characters
+                comicDes = comic_desc[:60].replace('New 52', '')
+        elif desdeck == 2:
+            #extract the characters from the deck
+            comicDes = comic_deck[:30].replace('New 52', '')
+        else:
+            break
+
+        i = 0
+        while (i < 2):
+            incorrect_volume = None
+            if 'volume' in comicDes.lower():
+                #found volume - let's grab it.
+                v_find = comicDes.lower().find('volume')
+                #arbitrarily grab the next 10 chars (6 for volume + 1 for space + 3 for the actual vol #)
+                #increased to 10 to allow for text numbering (+5 max)
+                #sometimes it's volume 5 and ocassionally it's fifth volume.
+                if 'collected' in comicDes.lower():
+                    cde = re.sub(r'[\s\-]', '', comicDes).strip().lower()
+                    if (
+                           'oneshot' in cde[:cde.find('collected')]
+                           and cde.find('volume') > cde.find('collected')
+                    ):
+                        # we set the incorrect_volume here so that when it returns to update the db we can
+                        # check to see if it matches the existing volume and if so replace it with any new
+                        # values since the incorrect volume is incorrect.
+                        incorrect_volume = comicDes[v_find:v_find+15]
+                if comicDes[v_find+7:comicDes.find(' ', v_find+7)].isdigit():
+                    comic['ComicVersion'] = re.sub("[^0-9]", "", comicDes[v_find+7:comicDes.find(' ', v_find+7)]).strip()
+                    break
+                elif i == 0:
+                    vfind = comicDes[v_find:v_find +15]   #if it's volume 5 format
+                    basenums = {'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10', 'i': '1', 'ii': '2', 'iii': '3', 'iv': '4', 'v': '5'}
+                    logger.fdebug('volume X format - ' + str(i) + ': ' + vfind)
+                else:
+                    vfind = comicDes[:v_find]   # if it's fifth volume format
+                    basenums = {'zero': '0', 'first': '1', 'second': '2', 'third': '3', 'fourth': '4', 'fifth': '5', 'sixth': '6', 'seventh': '7', 'eighth': '8', 'nineth': '9', 'tenth': '10', 'i': '1', 'ii': '2', 'iii': '3', 'iv': '4', 'v': '5'}
+                    logger.fdebug('X volume format - ' + str(i) + ': ' + vfind)
+                og_vfind = vfind
+                volconv = ''
+                for nums in basenums:
+                    if nums in vfind.lower():
+                        sconv = basenums[nums]
+                        vfind = re.sub(nums, sconv, vfind.lower())
+                        break
+                #logger.info('volconv: ' + str(volconv))
+
+                #now we attempt to find the character position after the word 'volume'
+                if i == 0:
+                    volthis = vfind.lower().find('volume')
+                    volthis = volthis + 6  # add on the actual word to the position so that we can grab the subsequent digit
+                    vfind = vfind[volthis:volthis + 4]  # grab the next 4 characters ;)
+                elif i == 1:
+                    volthis = vfind.lower().find('volume')
+                    vfind = vfind[volthis - 4:volthis]  # grab the next 4 characters ;)
+
+                if '(' in vfind:
+                    #bracket detected in versioning'
+                    vfindit = re.findall('[^()]+', vfind)
+                    vfind = vfindit[0]
+                vf = re.findall('[^<>]+', vfind)
+                try:
+                    ledigit = re.sub("[^0-9]", "", vf[0])
+                    if ledigit != '':
+                        #logger.info('incorrect_volume: %s / vfind: %s' % (incorrect_volume, og_vfind))
+                        if all([incorrect_volume is not None, incorrect_volume == og_vfind]):
+                            logger.fdebug('previous incorrect volume possible. Assigning incorrect value as: %s' % ledigit)
+                            comic['incorrect_volume'] = ledigit
+                        else:
+                            comic['ComicVersion'] = ledigit
+                            logger.fdebug("Volume information found! Adding to series record : volume " + comic['ComicVersion'])
+                            break
+                except:
+                    pass
+
+
+                i += 1
+            else:
+                i += 1
+
+        if comic['ComicVersion'] == 'None':
+            logger.fdebug('comic[ComicVersion]:' + str(comic['ComicVersion']))
+            desdeck -= 1
+        else:
+            break
+
+    logger.info('comic_values: %s' % (comic,))
+
+    return comic

@@ -107,9 +107,8 @@
 		<tbody>
 		%for weekly in weeklyresults:
 			<%
-				if weekly['STATUS'] == 'Skipped':
-					grade = 'Z'
-				elif weekly['STATUS'] == 'Wanted':
+                                grade = 'Z'
+				if weekly['STATUS'] == 'Wanted':
 					grade = 'X'
 				elif weekly['STATUS'] == 'Snatched':
 					grade = 'C'
@@ -128,9 +127,10 @@
                                 #if the comicid is present, but issue isn't marked as wanted.
                                 if any([weekly['HAVEIT'] == 'Yes', weekly['HAVEIT'] == weekly['COMICID']]) and weekly['STATUS'] == 'Skipped':
                                         grade = 'E'
-                                                               
+
 			%>
 			<tr class="grade${grade}">
+                                <a name="${weekly['COMIC']}_${weekly['ISSUE']}"></a>
                                 %if pullfilter is True:
                                         <td class="publisher">${weekly['PUBLISHER']}</td>
                                         <td class="comicname">
@@ -171,12 +171,16 @@
                                         %if weekly['AUTOWANT']:
              	                             <td class="status">Auto-Want</td>
                                         %else:
-              	                            <td class="status">${weekly['STATUS']}</td>
+                                            %if weekly['STATUS'] == 'Mismatched':
+                                                <td class="status"><a href="upcoming#tabs-3" title="View mismatch reason">${weekly['STATUS']}</a></td>
+                                            %else:
+                                                <td class="status">${weekly['STATUS']}</td>
+                                            %endif
                                         %endif
                                         <td class="options">
                                         %if weekly['HAVEIT'] == 'OneOff':
                                             %if weekly['STATUS'] == 'Snatched' or weekly['STATUS'] == 'Downloaded':
-                                                <a href="#" onclick="doAjaxCall('queueit?ComicName=${weekly['COMIC'] | u}&ComicID=${weekly['COMICID']}&IssueID=${weekly['ISSUEID']}&ComicIssue=${weekly['ISSUE']}&mode=pullwant&Publisher=${weekly['PUBLISHER']}&pullinfo=${weekinfo['midweek']}&pullweek=${weekinfo['weeknumber']}&pullyear=${weekinfo['year']}&BookType=${weekly['FORMAT']}',$(this),'table')" data-success="Successfully submitted search request for ${weekly['COMIC']} #${weekly['ISSUE']}" title="Snatch issue again as a One-Off">
+                                                <a href="#" onclick="doAjaxCall('queueit?ComicName=${weekly['COMIC'] | u}&ComicID=${weekly['COMICID']}&IssueID=${weekly['ISSUEID']}&ComicIssue=${weekly['ISSUE']}&mode=pullwant&Publisher=${weekly['PUBLISHER'] |u}&pullinfo=${weekinfo['midweek']}&pullweek=${weekinfo['weeknumber']}&pullyear=${weekinfo['year']}&BookType=${weekly['FORMAT']}',$(this),'table')" data-success="Successfully submitted search request for ${weekly['COMIC']} #${weekly['ISSUE']}" title="Snatch issue again as a One-Off">
                                                 %if mylar.CONFIG.SHOW_ICONS:
                                                     <img style="margin: 0px 5px" src="images/retry.png" height="25" width="25" class="highqual" />
                                                 %else:
@@ -204,7 +208,7 @@
                                                     %endif
                                                     </a>
                                                     %if all([weekly['HAVEIT'] == 'No', weekly['STATUS'] == 'Skipped']):
-                                                        <a href="#" onclick="doAjaxCall('queueit?ComicName=${weekly['COMIC'] | u}&ComicID=${weekly['COMICID']}&IssueID=${weekly['ISSUEID']}&ComicIssue=${weekly['ISSUE']}&mode=pullwant&Publisher=${weekly['PUBLISHER']}&pullinfo=${weekinfo['midweek']}&pullweek=${weekinfo['weeknumber']}&pullyear=${weekinfo['year']}&BookType=${weekly['FORMAT']}',$(this),'table')" data-success="Successfully submitted search request for ${weekly['COMIC']} #${weekly['ISSUE']}" title="One off download">
+                                                        <a href="#" onclick="doAjaxCall('queueit?ComicName=${weekly['COMIC'] | u}&ComicID=${weekly['COMICID']}&IssueID=${weekly['ISSUEID']}&ComicIssue=${weekly['ISSUE']}&mode=pullwant&Publisher=${weekly['PUBLISHER'] |u}&pullinfo=${weekinfo['midweek']}&pullweek=${weekinfo['weeknumber']}&pullyear=${weekinfo['year']}&BookType=${weekly['FORMAT']}',$(this),'table')" data-success="Successfully submitted search request for ${weekly['COMIC']} #${weekly['ISSUE']}" title="One off download">
                                                         %if mylar.CONFIG.SHOW_ICONS:
                                                            <img style="margin: 0px 5px" src="images/search.png" height="25" width="25" class="highqual" />
                                                         %else:
@@ -213,7 +217,7 @@
                                                         </a>
                                                      %endif
                                                 %elif weekly['COMICID'] == weekly['HAVEIT'] or weekly['HAVEIT'] == 'Yes':
-                                                    <a href="#" title="mark this issue as Wanted" onclick="doAjaxCall('queueIssue?IssueID=${weekly['ISSUEID']}&ComicID=${weekly['COMICID']}&ComicIssue=${weekly['ISSUE']}&mode=want',$(this),'table')" data-success="${weekly['COMIC']} #${weekly['ISSUE']} has now been marked as Wanted.">
+                                                    <a href="#" title="mark this issue as Wanted" onclick="doAjaxCall('queueissue?IssueID=${weekly['ISSUEID']}&ComicID=${weekly['COMICID']}&ComicIssue=${weekly['ISSUE']}&mode=want',$(this),'table')" data-success="${weekly['COMIC']} #${weekly['ISSUE']} has now been marked as Wanted.">
                                                     %if mylar.CONFIG.SHOW_ICONS:
                                                         <img style="margin: 0px 5px" src="images/add.png" height="25" width="25" class="highqual" />
                                                     %else:
@@ -222,7 +226,7 @@
                                                     </a>
                                                 %else:
                                                     %if weekly['ISSUE'] == '1' or weekly['ISSUE'] == '0':
-                                                        <a href="#" title="Watch for this series and auto-add to Watchlist when available" onclick="doAjaxCall('add2futurewatchlist?ComicName=${weekly['COMIC'] |u}&Issue=${weekly['ISSUE']}&Publisher=${weekly['PUBLISHER']}&ShipDate=${weekinfo['midweek']}&weeknumber=${weekinfo['weeknumber']}&year=${weekinfo['year']}',$(this),'table')" data-success="${weekly['COMIC']} is now on auto-watch/add.">
+                                                        <a href="#" title="Watch for this series and auto-add to Watchlist when available" onclick="doAjaxCall('add2futurewatchlist?ComicName=${weekly['COMIC'] |u}&Issue=${weekly['ISSUE']}&Publisher=${weekly['PUBLISHER'] |u}&ShipDate=${weekinfo['midweek']}&weeknumber=${weekinfo['weeknumber']}&year=${weekinfo['year']}',$(this),'table')" data-success="${weekly['COMIC']} is now on auto-watch/add.">
                                                         %if mylar.CONFIG.SHOW_ICONS:
                                                             <img style="margin: 0px 5px" src="images/watch.png" height="25" width="25" class="highqual" />
                                                         %else:
@@ -230,7 +234,7 @@
                                                         %endif
                                                         </a>
                                                      %endif
-                                                     <a href="searchit?name=${weekly['COMIC'] | u}&issue=${weekly['ISSUE']}&mode=pullseries" title="Search for this series to add to your watchlist">
+                                                     <a href="searchit?name=${weekly['COMIC'] | u}&issue=${weekly['ISSUE']}&smode=pullseries" title="Search for this series to add to your watchlist">
                                                      %if mylar.CONFIG.SHOW_ICONS:
                                                          <img style="margin: 0px 5px" src="images/search_add.png" height="25" width="25" class="highqual" />
                                                      %else:
@@ -274,7 +278,7 @@
                                             %endif
                                             </a>
                                         %elif weekly['STATUS'] == 'Snatched':
-                                            <a href="#" onclick="doAjaxCall('queueit?ComicName=${weekly['COMIC'] | u}&ComicID=${weekly['COMICID']}&IssueID=${weekly['ISSUEID']}&ComicIssue=${weekly['ISSUE']}&mode=pullwant&Publisher=${weekly['PUBLISHER']}&pullinfo=${weekinfo['midweek']}&pullweek=${weekinfo['weeknumber']}&pullyear=${weekinfo['year']}&BookType=${weekly['FORMAT']}',$(this),'table')" data-success="Successfully submitted search request for ${weekly['COMIC']} #${weekly['ISSUE']}" title="Snatch issue again">
+                                            <a href="#" onclick="doAjaxCall('queueit?ComicName=${weekly['COMIC'] | u}&ComicID=${weekly['COMICID']}&IssueID=${weekly['ISSUEID']}&ComicIssue=${weekly['ISSUE']}&mode=pullwant&Publisher=${weekly['PUBLISHER'] |u}&pullinfo=${weekinfo['midweek']}&pullweek=${weekinfo['weeknumber']}&pullyear=${weekinfo['year']}&BookType=${weekly['FORMAT']}',$(this),'table')" data-success="Successfully submitted search request for ${weekly['COMIC']} #${weekly['ISSUE']}" title="Snatch issue again">
                                             %if mylar.CONFIG.SHOW_ICONS:
                                                   <img style="margin: 0px 5px" src="images/retry.png" height="25" width="25" class="highqual" />
                                             %else:
@@ -289,14 +293,14 @@
 		</tbody>
 	</table>
       </div>
-        <div style="z-index:10;position:absolute;text-align:center;margin-top:10px;">
+        <div style="z-index:10;overflow: hidden;margin-top:10px;">
+        <div style="z-index:10;float: left; text-align:center;margin-top:5px;">
             <div style="display:inline-block;">
-                 </br>
                  <small>last updated: ${weekinfo['last_update']}</small>
             </div>
         </div>
-        <div style="z-index:10;position:relative;float:right;margin-top:10px;">
-            <table style="border-spacing:3px;border-collapse:separate;">
+
+            <table style="float: right; border-spacing:3px;border-collapse:separate;">
               <tr>
                 <td style="float:left;margin-left:2px;vertical-align:middle;"><span style="border:1px solid#ccc;float:left;width:30px;height:12px;margin:4px;background:#641716;" title="Series is monitored & issue is Wanted"></span> monitored series</td>
                 <td style="float:left;margin-left:2px;vertical-align:middle;"><span style="border:1px solid#ccc;float:left;width:30px;height:12px;margin:4px;background:#444b54;" title="Series is Monitored & issue is Skipped"></span> monitored series</td>
@@ -306,6 +310,7 @@
               </tr>
             </table>
        </div>
+
 </%def>
 
 <%def name="headIncludes()">
@@ -315,7 +320,7 @@
 </%def>
 
 <%def name="javascriptIncludes()">
-	<script src="js/libs/jquery.dataTables.min.js"></script>
+        <script src="js/libs/jquery.dataTables.1.10.25.min.js"></script>
         <script src="js/libs/selectize.js"></script>
         <script src="js/libs/circular-json.js"></script>
         <script type="text/javascript">
@@ -356,7 +361,7 @@
                                     "bPaginate": false,
                                     "bDestroy": true
                             });
-                        } else{ 
+                        } else{
                             $('#downloads_table_body').append('<tr><td style="text-align:center;" colspan="3">No results returned</td></tr>');
                         }
                 $("#choose_specific_download_dialog").dialog({
@@ -461,6 +466,15 @@
                 });
                 $("#menu_link_delete").click(openMassAdd);
                 $("#pub_button").click(run_them);
+
+                // The linkfeedback class click handler
+                $('body').on('click', 'a[href="#"]', function() {
+                    var savet = this;
+                    $(this).css('position', 'relative').css('top', '3px');
+                    setTimeout(function() { $(savet).css('font-weight', '')}, 200);
+                    setTimeout(function() { $(savet).css('position', '').css('top', '')}, 400);
+                });
+
                 initActions();
 
                 $(function selector() {
@@ -564,3 +578,4 @@
         });
       </script>
 </%def>
+

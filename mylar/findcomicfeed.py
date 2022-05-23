@@ -41,7 +41,7 @@ def Startit(searchName, searchIssue, searchYear, ComicVersion, IssDateFix, bookt
 
     tmpsearchIssue = searchIssue
 
-    if any([booktype == 'One-Shot', booktype == 'TPB']):
+    if any([booktype == 'One-Shot', booktype == 'TPB', booktype =='HC', booktype =='GN', searchIssue is None]):
         tmpsearchIssue = '1'
         loop = 4
     elif len(searchIssue) == 1:
@@ -186,7 +186,7 @@ def Startit(searchName, searchIssue, searchYear, ComicVersion, IssDateFix, bookt
     regexList=[regEx, regExOne, regExTwo, regExThree, regExFour, regExFive]
 
     except_list=['releases', 'gold line', 'distribution', '0-day', '0 day', '0day', 'o-day']
-    block_regex = r"\[\d{2,3}\/\d{2,3}\]"
+    block_regex = r"\[\d{1,3}\/\d{1,3}\]"
 
     for entry in keyPair:
         title = entry['title']

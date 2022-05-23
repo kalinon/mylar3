@@ -530,7 +530,7 @@ header #logo {
 }
 footer {
   display: table;
-  margin: 60px auto 50px auto;
+  margin: 5px auto 50px auto;
   width: 960px;
   padding-top: 10px;
   border-top: 1px solid #EEE;
@@ -595,7 +595,8 @@ footer {
 #ajaxMsg .msg {
   font-family: "Trebuchet MS", Helvetica, Arial, sans-serif;
   line-height: normal;
-  padding-left: 20px;
+  padding: 5px 20px;
+  text-align: center;
 }
 #ajaxMsg .loader {
   position: relative;
@@ -1909,7 +1910,7 @@ DIV.progress-container > DIV
 #actions {
   float: right;
   text-align: right;
-  margin-right: 10px;
+  margin-right: 0px;
   margin-top: -5px;
   color: #cccccc;
 }
@@ -2044,70 +2045,119 @@ DIV.progress-container > DIV
 .clearfix:after {
   clear: both;
 }
+#upcoming_nodata_table th#delcolumn,
+#wanted_table th#select{
+  text-align: center;
+  vertical-align: middle;
+  width: 32px;
+}
 #upcoming_table th#comicname,
-#wanted_table th#comicname {
+#wanted_table th#comicname,
+#upcoming_nodata_table th#comicname {
+  min-width: 225px;
+  text-align: center;
+}
+#mismatched_table th#comicname {
   min-width: 150px;
   text-align: center;
 }
-#upcoming_table td#select,
-#upcoming_table td#status,
-#wanted_table td#select,
-#wanted_table td#status {
+#upcoming_table th#issuenumber,
+#wanted_table th#issuenumber,
+#upcoming_nodata_table th#issuenumber,
+#mismatched_table th#issuenumber {
   text-align: center;
   vertical-align: middle;
+  width: 50px;
 }
-#upcoming_table th#type,
-#wanted_table th#type,
-#wanted_table th#tier,
-#searchresults_table th#score {
-  min-width: 75px;
-  text-align: center;
-}
-#wanted_table th#albumart {
-  min-width: 50px;
-  text-align: center;
-}
-#upcoming_table th#issuenumber,
-#wanted_table th#issuenumber {
-  min-width: 50px;
-  text-align: center;
-}
-#upcoming_table th#reldate,
 #wanted_table th#reldate {
   min-width: 50px;
   text-align: center;
 }
-#upcoming_table td#albumart,
-#wanted_table td#albumart {
-  min-width: 50px;
+#upcoming_table th#reldate,
+#upcoming_nodata_table th#reldate {
+  max-width: 50px;
+  text-align: center;
+}
+#upcoming_table th#status,
+#wanted_table th#status,
+#upcoming_nodata_table th#status{
   text-align: center;
   vertical-align: middle;
+  width: 69px;
+}
+#mismatched_table th#misinfo {
+  text-align: center;
+  min-width: 150px;
+}
+#mismatched_table th#weekinfo {
+  text-align: center;
+  width: 60px;
+}
+#wanted_table th#tier {
+  width: 159px;
+  text-align: center;
 }
 #upcoming_table td#comicname,
-#wanted_table td#comicname {
-  min-width: 200px;
+#wanted_table td#comicname,
+#upcoming_nodata_table td#comicname {
+  min-width: 225px;
+  text-align: center;
+}
+#mismatched_table td#comicname {
+  min-width: 150px;
+  text-align: center;
+}
+#upcoming_nodata_table td#delcolumn,
+#wanted_table td#select {
   text-align: center;
   vertical-align: middle;
+  width: 32px;
+}
+#mismatched_table td#misinfo {
+  text-align: center;
+  min-width: 150px;
+}
+#mismatched_table td#weekinfo {
+  text-align: center;
+  width: 60px;
 }
 #upcoming_table td#issuenumber,
-#wanted_table td#issuenumber {
+#wanted_table td#issuenumber,
+#upcoming_nodata_table td#issuenumber,
+#mismatched_table td#issuenumber {
   min-width: 50px;
   text-align: center;
   vertical-align: middle;
 }
-#upcoming_table td#reldate,
 #wanted_table td#reldate {
   min-width: 50px;
   text-align: center;
   vertical-align: middle;
 }
-#upcoming_table td#type,
-#wanted_table td#type,
+#upcoming_table td#reldate,
+#upcoming_nodata_table td#reldate,
+#mismatched_table td#reldate {
+  max-width: 50px;
+  text-align: center;
+  vertical-align: middle;
+}
+#upcoming_table td#status,
+#wanted_table td#status,
+#upcoming_nodata_table td#status,
+#mismatched_table td#status {
+  text-align: center;
+  vertical-align: middle;
+  width: 69px;
+}
 #wanted_table td#tier,
 #searchresults_table td#score {
   min-width: 75px;
   text-align: center;
   vertical-align: middle;
+}
+#searchresults_table th#score {
+  min-width: 75px;
+  text-align: center;
 }
 table tr td#status a {
   color: #4183c4;
@@ -2301,6 +2351,14 @@ fieldset.fieldset_header {
   box-shadow: 0px 0px 10px #c4c4c4;
   padding-top: 5px;
 }
+fieldset.fieldset_header_check {
+  margin: 5px;
+  padding: 0px 5px 5px;
+  border: 1px solid #F50202;
+  border-radius: 8px;
+  box-shadow: 0px 0px 10px #F50202;
+  padding-top: 5px;
+}
 figure.item{
   vertical-align: top;
   display: inline-block;
@@ -2311,4 +2369,82 @@ figure.item{
   display: block;
   line-height: .5em;
 }
+.td-center {
+  text-align: center;
+}
+.watermark {
+  position: absolute;
+  color: darkgray;
+  opacity: 0.15;
+  font-size: 1.5em;
+  width: 100%;
+  margin-top: -15px;
+  z-index:10;
+}
+div.center { text-align: center; }
+div.botpad { padding-bottom: 20px; }
+div.toppad { padding-top: 20px; }
+div.bigbotpad { padding-bottom: 40px; }
+div.bigtoppad { padding-top: 40px; }
 
+.spinny  { animation: spinning-cog 1.3s infinite ease; }
+@keyframes spinning-cog  { 0% { transform: rotate(0deg); } 20% { transform: rotate(-45deg); }  100% { transform: rotate(360deg); } }
+img.mylarload {
+  height: 64px;
+  width: 64px;
+  position: relative;
+  filter: drop-shadow(0 0 0.75rem rgb(192, 192, 16));
+  backdrop-filter: blur(0px) saturate(3);
+  box-shadow: none!important;
+}
+img.mylarload.lastgood {
+  filter: drop-shadow(0 0 0.75rem rgb(0, 240, 16));
+  backdrop-filter: blur(0px) saturate(3);
+}
+img.mylarload.lastbad {
+  filter: drop-shadow(0 0 0.75rem rgb(240, 0, 16));
+  backdrop-filter: blur(0px) saturate(3);
+}
+.loadingdots:after {
+  content: ' .';
+  animation: dots 1s steps(5, end) infinite;
+}
+
+@keyframes dots {
+  0%, 20% {
+    color: rgba(0,0,0,0);
+    text-shadow:
+      .25em 0 0 rgba(0,0,0,0),
+      .5em 0 0 rgba(0,0,0,0);
+  }
+  40% {
+    color: white;
+    text-shadow:
+      .25em 0 0 rgba(0,0,0,0),
+      .5em 0 0 rgba(0,0,0,0);
+  }
+  60% {
+    text-shadow:
+      .25em 0 0 white,
+      .5em 0 0 rgba(0,0,0,0);
+  }
+  80%, 100% {
+    text-shadow:
+      .25em 0 0 white,
+      .5em 0 0 white;
+  }
+}
+.version_display {
+  color: black;
+}
+.py_checker {
+  position:relative;
+  top:-10px;
+  float:right;
+  color: #FF0000;
+  font-size: 115%;
+  font-weight: bold;
+}
+.py_vers {
+  color: #EE3232;
+}

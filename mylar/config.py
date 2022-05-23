@@ -1,3 +1,18 @@
+#  This file is part of Mylar.
+#
+#  Mylar is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 3 of the License, or
+#  (at your option) any later version.
+#
+#  Mylar is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with Mylar.  If not, see <http://www.gnu.org/licenses/>.
+
 import itertools
 from collections import OrderedDict
 from operator import itemgetter
@@ -8,11 +23,10 @@ import glob
 import json
 import codecs
 import shutil
-import threading
 import re
 import configparser
 import mylar
-from mylar import logger, helpers, encrypted
+from mylar import logger, helpers, encrypted, filechecker, db, maintenance
 
 config = configparser.ConfigParser()
 
@@ -20,7 +34,6 @@ _CONFIG_DEFINITIONS = OrderedDict({
      #keyname, type, section, default
     'CONFIG_VERSION': (int, 'General', 6),
     'MINIMAL_INI': (bool, 'General', False),
-    'OLDCONFIG_VERSION': (str, 'General', None),
     'AUTO_UPDATE': (bool, 'General', False),
     'CACHE_DIR': (str, 'General', None),
     'DYNAMIC_UPDATE': (int, 'General', 0),
@@ -40,11 +53,10 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'DELETE_REMOVE_DIR': (bool, 'General', False),
     'UPCOMING_SNATCHED': (bool, 'General', True),
     'UPDATE_ENDED': (bool, 'General', False),
-    'LOCMOVE': (bool, 'General', False),
     'NEWCOM_DIR': (str, 'General', None),
     'FFTONEWCOM_DIR': (bool, 'General', False),
     'FOLDER_SCAN_LOG_VERBOSE': (bool, 'General', False),
-    'INTERFACE': (str, 'General', 'default'),
+    'INTERFACE': (str, 'General', 'carbon'),
     'CORRECT_METADATA': (bool, 'General', False),
     'MOVE_FILES': (bool, 'General', False),
     'RENAME_FILES': (bool, 'General', False),
@@ -86,6 +98,8 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'SECURE_DIR': (str, 'General', None),
     'ENCRYPT_PASSWORDS': (bool, 'General', False),
     'BACKUP_ON_START': (bool, 'General', False),
+    'BACKUP_LOCATION': (str, 'General', None),
+    'BACKUP_RETENTION': (int, 'General', 4),
     'BACKFILL_LENGTH': (int, 'General', 8),  # weeks
     'BACKFILL_TIMESPAN': (int, 'General', 10),   # minutes
     'PROBLEM_DATES': (str, 'General', []),
@@ -93,6 +107,7 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'DEFAULT_DATES': (str, 'General', 'store_date'),
     'FOLDER_CACHE_LOCATION': (str, 'General', None),
     'SCAN_ON_SERIES_CHANGES': (bool, 'General', True),
+    'CLEAR_PROVIDER_TABLE': (bool, 'General', False),
 
     'RSS_CHECKINTERVAL': (int, 'Scheduler', 20),
     'SEARCH_INTERVAL': (int, 'Scheduler', 360),
@@ -138,6 +153,7 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'CV_ONLY': (bool, 'CV', True),
     'CV_ONETIMER': (bool, 'CV', True),
     'CVINFO': (bool, 'CV', False),
+    'CV_USER_AGENT': (str, 'CV', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.246'),
 
     'LOG_DIR' : (str, 'Logs', None),
     'MAX_LOGSIZE' : (int, 'Logs', 10000000),
@@ -202,6 +218,10 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'SLACK_ENABLED': (bool, 'SLACK', False),
     'SLACK_WEBHOOK_URL': (str, 'SLACK', None),
     'SLACK_ONSNATCH': (bool, 'SLACK', False),
+    
+    'MATTERMOST_ENABLED': (bool, 'MATTERMOST', False),
+    'MATTERMOST_WEBHOOK_URL': (str, 'MATTERMOST', None),
+    'MATTERMOST_ONSNATCH': (bool, 'MATTERMOST', False),
 
     'DISCORD_ENABLED': (bool, 'DISCORD', False),
     'DISCORD_WEBHOOK_URL': (str, 'DISCORD', None),
@@ -217,6 +237,11 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'EMAIL_ENC': (int, 'Email', 0),
     'EMAIL_ONGRAB': (bool, 'Email', True),
     'EMAIL_ONPOST': (bool, 'Email', True),
+
+    'GOTIFY_ENABLED': (bool, 'GOTIFY', False),
+    'GOTIFY_SERVER_URL': (str, 'GOTIFY', None),
+    'GOTIFY_TOKEN': (str, 'GOTIFY', None),
+    'GOTIFY_ONSNATCH': (bool, 'GOTIFY', False),
 
     'POST_PROCESSING': (bool, 'PostProcess', False),
     'FILE_OPTS': (str, 'PostProcess', 'move'),
@@ -253,6 +278,7 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'SAB_TO_MYLAR': (bool, 'SABnzbd', False),
     'SAB_DIRECTORY': (str, 'SABnzbd', None),
     'SAB_VERSION': (str, 'SABnzbd', None),
+    'SAB_MOVING_DELAY': (int, 'SABnzbd', 5),
     'SAB_CLIENT_POST_PROCESSING': (bool, 'SABnzbd', False),   #0/False: ComicRN.py, #1/True: Completed Download Handling
 
     'NZBGET_HOST': (str, 'NZBGet', None),
@@ -328,9 +354,14 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'PUBLIC_VERIFY': (bool, 'Torrents', True),
 
     'ENABLE_DDL': (bool, 'DDL', False),
+    'ENABLE_GETCOMICS': (bool, 'DDL', False),
     'ALLOW_PACKS': (bool, 'DDL', False),
+    'PACK_PRIORITY': (bool, 'DDL', False),
+    'DDL_QUERY_DELAY': (int, 'DDL', 15),
     'DDL_LOCATION': (str, 'DDL', None),
     'DDL_AUTORESUME': (bool, 'DDL', True),
+    'ENABLE_FLARESOLVERR': (bool, 'DDL', False),
+    'FLARESOLVERR_URL': (str, 'DDL', None),
 
     'AUTO_SNATCH': (bool, 'AutoSnatch', False),
     'AUTO_SNATCH_SCRIPT': (str, 'AutoSnatch', None),
@@ -399,6 +430,7 @@ _CONFIG_DEFINITIONS = OrderedDict({
 
     'OPDS_ENABLE': (bool, 'OPDS', False),
     'OPDS_AUTHENTICATION': (bool, 'OPDS', False),
+    'OPDS_ENDPOINT': (str, 'OPDS', 'opds'),
     'OPDS_USERNAME': (str, 'OPDS', None),
     'OPDS_PASSWORD': (str, 'OPDS', None),
     'OPDS_METAINFO': (bool, 'OPDS', False),
@@ -432,7 +464,11 @@ class Config(object):
                 count = sum(1 for line in open(self._config_file))
             else:
                 count = 0
-            self.newconfig = 11
+
+            #this is the current version at this particular point in time.
+            self.newconfig = 12
+
+            OLDCONFIG_VERSION = 0
             if count == 0:
                 CONFIG_VERSION = 0
                 MINIMALINI = False
@@ -440,14 +476,17 @@ class Config(object):
                 # get the config version first, since we need to know.
                 try:
                     CONFIG_VERSION = config.getint('General', 'config_version')
+                    OLDCONFIG_VERSION = CONFIG_VERSION
                 except:
                     CONFIG_VERSION = 0
+                    OLDCONFIG_VERSION = 0
                 try:
                     MINIMALINI = config.getboolean('General', 'minimal_ini')
                 except:
                     MINIMALINI = False
 
         setattr(self, 'CONFIG_VERSION', CONFIG_VERSION)
+        setattr(self, 'OLDCONFIG_VERSION', OLDCONFIG_VERSION)
         setattr(self, 'MINIMAL_INI', MINIMALINI)
 
         config_values = []
@@ -577,31 +616,44 @@ class Config(object):
             else:
                 logger.mylar_log.initLogger(loglevel=log_level, log_dir=self.LOG_DIR, max_logsize=self.MAX_LOGSIZE, max_logfiles=self.MAX_LOGFILES)
 
+        if any([self.CONFIG_VERSION == 0, self.CONFIG_VERSION < self.newconfig]):
+            if not self.BACKUP_LOCATION:
+                # this is needed here since the configuration hasn't run to check the location value yet.
+                self.BACKUP_LOCATION = os.path.join(mylar.DATA_DIR, 'backup')
+
+            backupinfo = {'location': self.BACKUP_LOCATION,
+                          'config_version': self.CONFIG_VERSION,
+                          'backup_retention': self.BACKUP_RETENTION}
+            cc = maintenance.Maintenance('backup')
+            bcheck = cc.backup_files(cfg=True, dbs=False, backupinfo=backupinfo)
+
+            if self.CONFIG_VERSION < 12:
+                print('Attempting to update configuration..')
+                #8-torznab multiple entries merged into extra_torznabs value
+                #9-remote rtorrent ssl option
+                #10-encryption of all keys/passwords.
+                #11-provider ids
+                #12-ddl seperation into multiple providers, new keys, update tables
+                self.config_update()
+            setattr(self, 'OLDCONFIG_VERSION', str(self.CONFIG_VERSION))
+            setattr(self, 'CONFIG_VERSION', self.newconfig)
+            config.set('General', 'CONFIG_VERSION', str(self.newconfig))
+            self.writeconfig(startup=startup)
+        else:
+            if self.OLDCONFIG_VERSION != self.CONFIG_VERSION:
+                setattr(self, 'OLDCONFIG_VERSION', str(self.CONFIG_VERSION))
+
         extra_newznabs, extra_torznabs = self.get_extras()
         setattr(self, 'EXTRA_NEWZNABS', extra_newznabs)
         setattr(self, 'EXTRA_TORZNABS', extra_torznabs)
         setattr(self, 'IGNORED_PUBLISHERS', self.get_ignored_pubs())
 
-        if any([self.CONFIG_VERSION == 0, self.CONFIG_VERSION < self.newconfig]):
-            try:
-                shutil.move(self._config_file, os.path.join(mylar.DATA_DIR, 'config.ini.backup'))
-            except:
-                logger.warn('Unable to make proper backup of config file in %s' % os.path.join(mylar.DATA_DIR, 'config.ini.backup'))
-            if self.CONFIG_VERSION < 11:
-                logger.info('Attempting to update configuration..')
-                #8-torznab multiple entries merged into extra_torznabs value
-                #9-remote rtorrent ssl option
-                #10-encryption of all keys/passwords.
-                #11-provider_ids
-                self.config_update()
-            setattr(self, 'CONFIG_VERSION', str(self.newconfig))
-            config.set('General', 'CONFIG_VERSION', str(self.newconfig))
-            self.writeconfig()
-
-        self.provider_sequence()
+        if startup is False:
+            # need to do provider sequence AFTER db check
+            self.provider_sequence()
         self.configure(startup=startup)
-        if self.WRITE_THE_CONFIG is True:
-            self.writeconfig()
+        if self.WRITE_THE_CONFIG is True or startup is True:
+            self.writeconfig(startup=startup)
         return self
 
     def config_update(self):
@@ -663,6 +715,15 @@ class Config(object):
             #        b_list.append(tuple(tmp_i))
             #        b_cnt +=1
             #setattr(self, 'EXTRA_TORZNABS', b_list)
+
+        if self.newconfig < 12:
+            #change enable_ddl to be a true/false for multiple ddl providers
+            #set enable_getcomics to True by default if that's the case.
+            if self.ENABLE_DDL is True:
+                self.ENABLE_GETCOMICS = True
+                config.set('DDL', 'enable_getcomics', self.ENABLE_GETCOMICS)
+            #tables will be updated by checking the OLDCONFIG_VERSION in __init__
+            logger.info('Successfully updated config to version 12 ( multiple DDL provider option )')
 
         logger.info('Configuration upgraded to version %s' % self.newconfig)
 
@@ -816,7 +877,7 @@ class Config(object):
             self.encrypt_items(mode='encrypt')
 
 
-    def writeconfig(self, values=None):
+    def writeconfig(self, values=None, startup=False):
         logger.fdebug("Writing configuration to file")
         config.set('Newznab', 'extra_newznabs', ', '.join(self.write_extras(self.EXTRA_NEWZNABS)))
         tmp_torz = self.write_extras(self.EXTRA_TORZNABS)
@@ -827,7 +888,8 @@ class Config(object):
         setattr(self, 'EXTRA_NEWZNABS', extra_newznabs)
         setattr(self, 'EXTRA_TORZNABS', extra_torznabs)
 
-        self.provider_sequence()
+        if startup is False:
+            self.provider_sequence()
 
         ###this should be moved elsewhere...
         if type(self.IGNORED_PUBLISHERS) != list:
@@ -930,6 +992,9 @@ class Config(object):
 
     def configure(self, update=False, startup=False):
 
+        if all([self.CLEAR_PROVIDER_TABLE is True, startup is True]):
+            mylar.MAINTENANCE = True
+
         #force alt_pull = 2 on restarts regardless of settings
         if self.ALT_PULL != 2:
             self.ALT_PULL = 2
@@ -940,7 +1005,7 @@ class Config(object):
 
         if self.GIT_TOKEN:
             self.GIT_TOKEN = (self.GIT_TOKEN, 'x-oauth-basic')
-            logger.info('git_token set to %s' % (self.GIT_TOKEN,))
+            #logger.info('git_token set to %s' % (self.GIT_TOKEN,))
 
         try:
             if not any([self.SAB_HOST is None, self.SAB_HOST == '', 'http://' in self.SAB_HOST[:7], 'https://' in self.SAB_HOST[:8]]):
@@ -983,7 +1048,7 @@ class Config(object):
             try:
                os.makedirs(self.CACHE_DIR)
             except OSError:
-                logger.error('[Cache Check] Could not create cache dir. Check permissions of datadir: ' + mylar.DATA_DIR)
+                logger.error('[Cache Check] Could not create cache dir. Check permissions of datadir: %s' % mylar.DATA_DIR)
 
 
         if not self.SECURE_DIR:
@@ -993,7 +1058,16 @@ class Config(object):
             try:
                os.makedirs(self.SECURE_DIR)
             except OSError:
-                logger.error('[Secure DIR Check] Could not create secure directory. Check permissions of datadir: ' + mylar.DATA_DIR)
+                logger.error('[Secure DIR Check] Could not create secure directory. Check permissions of datadir: %s' % mylar.DATA_DIR)
+
+        if not self.BACKUP_LOCATION:
+            self.BACKUP_LOCATION = os.path.join(mylar.DATA_DIR, 'backup')
+
+        if not os.path.exists(self.BACKUP_LOCATION):
+            try:
+                os.makedirs(self.BACKUP_LOCATION)
+            except OSError:
+                logger.error('[Backup Location Check] Could not create backup directory. Check permissions for creation of : %s' % self.BACKUP_LOCATION)
 
         #make sure the cookies.dat file is not in cache
         for f in glob.glob(os.path.join(self.CACHE_DIR, '.32p_cookies.dat')):
@@ -1111,57 +1185,67 @@ class Config(object):
 
         logger.info('[PROBLEM_DATES] Problem dates loaded: %s' % (self.PROBLEM_DATES,))
 
+        #default opds endpoint check
+        if any([self.OPDS_ENDPOINT is None, len(self.OPDS_ENDPOINT) == 0]):
+            self.OPDS_ENDPOINT = 'opds'
+        else:
+            if self.OPDS_ENDPOINT.startswith('/'):
+                self.OPDS_ENDPOINT = self.OPDS_ENDPOINT[1:]
+            elif self.OPDS_ENDPOINT.endswith('/'):
+                self.OPDS_ENDPOINT = self.OPDS_ENDPOINT[:-1]
+            config.set('OPDS', 'opds_endpoint', self.OPDS_ENDPOINT.strip())
+
         #comictagger - force to use included version if option is enabled.
         import comictaggerlib.ctversion as ctversion
         logger.info('[COMICTAGGER] Version detected: %s' % ctversion.version)
-        if self.ENABLE_META:
-            mylar.CMTAGGER_PATH = mylar.PROG_DIR
+        #if any([self.ENABLE_META, self.CBR2CBZ_ONLY]):
+        mylar.CMTAGGER_PATH = mylar.PROG_DIR
 
-            if not ([self.CT_NOTES_FORMAT == 'CVDB', self.CT_NOTES_FORMAT == 'Issue ID']):
-                setattr(self, 'CT_NOTES_FORMAT', 'Issue ID')
-                config.set('Metatagging', 'ct_notes_format', self.CT_NOTES_FORMAT)
+        if not ([self.CT_NOTES_FORMAT == 'CVDB', self.CT_NOTES_FORMAT == 'Issue ID']):
+            setattr(self, 'CT_NOTES_FORMAT', 'Issue ID')
+            config.set('Metatagging', 'ct_notes_format', self.CT_NOTES_FORMAT)
 
-            #we need to make sure the default folder setting for the comictagger settings exists so things don't error out
-            if self.CT_SETTINGSPATH is None:
-                chkpass = False
-                import pathlib
+        #we need to make sure the default folder setting for the comictagger settings exists so things don't error out
+        if self.CT_SETTINGSPATH is None:
+            chkpass = False
+            import pathlib
 
-                #windows won't be able to create in ~, so force it to DATA_DIR
-                if mylar.OS_DETECT == 'Windows':
-                    ct_path = mylar.DATA_DIR
-                    chkpass = True
-                else:
-                    ct_path = str(pathlib.Path(os.path.expanduser("~")))
-                    try:
-                        os.mkdir(os.path.join(ct_path, '.ComicTagger'))
-                        chkpass = True
-                    except OSError as e:
-                        if e.errno != errno.EEXIST:
-                            logger.error('Unable to create .ComicTagger directory in %s. Setting up to default location of %s' % (ct_path, os.path.join(mylar.DATA_DIR, '.ComicTagger')))
-                            ct_path = mylar.DATA_DIR
-                            chkpass = True
-                        elif e.errno == 17: #file_already_exists
-                            chkpass = True
-                    except exception as e:
-                        logger.error('Unable to create setting directory for ComicTagger. This WILL cause problems when tagging.')
-                        ct_path = mylar.DATA_DIR
-                        chkpass = True
-
-                if chkpass is True:
-                    setattr(self, 'CT_SETTINGSPATH', os.path.join(ct_path, '.ComicTagger'))
-                    config.set('Metatagging', 'ct_settingspath', self.CT_SETTINGSPATH)
-
-            if not update:
-                logger.fdebug('[COMICTAGGER] Setting ComicTagger settings default path to : %s' % self.CT_SETTINGSPATH)
-
-            if not os.path.exists(self.CT_SETTINGSPATH):
+            #windows won't be able to create in ~, so force it to DATA_DIR
+            if mylar.OS_DETECT == 'Windows':
+                ct_path = mylar.DATA_DIR
+                chkpass = True
+            else:
+                ct_path = str(pathlib.Path(os.path.expanduser("~")))
                 try:
-                    os.mkdir(self.CT_SETTINGSPATH)
+                    os.mkdir(os.path.join(ct_path, '.ComicTagger'))
+                    chkpass = True
                 except OSError as e:
                     if e.errno != errno.EEXIST:
-                        logger.error('Unable to create setting directory for ComicTagger. This WILL cause problems when tagging.')
-                else:
-                    logger.fdebug('Successfully created ComicTagger Settings location.')
+                        logger.error('Unable to create .ComicTagger directory in %s. Setting up to default location of %s' % (ct_path, os.path.join(mylar.DATA_DIR, '.ComicTagger')))
+                        ct_path = mylar.DATA_DIR
+                        chkpass = True
+                    elif e.errno == 17: #file_already_exists
+                        chkpass = True
+                except exception as e:
+                    logger.error('Unable to create setting directory for ComicTagger. This WILL cause problems when tagging.')
+                    ct_path = mylar.DATA_DIR
+                    chkpass = True
+
+            if chkpass is True:
+                setattr(self, 'CT_SETTINGSPATH', os.path.join(ct_path, '.ComicTagger'))
+                config.set('Metatagging', 'ct_settingspath', self.CT_SETTINGSPATH)
+
+        if not update:
+            logger.fdebug('[COMICTAGGER] Setting ComicTagger settings default path to : %s' % self.CT_SETTINGSPATH)
+
+        if not os.path.exists(self.CT_SETTINGSPATH):
+            try:
+                os.mkdir(self.CT_SETTINGSPATH)
+            except OSError as e:
+                if e.errno != errno.EEXIST:
+                    logger.error('Unable to create setting directory for ComicTagger. This WILL cause problems when tagging.')
+            else:
+                logger.fdebug('Successfully created ComicTagger Settings location.')
 
         #make sure queues are running here...
         if startup is False:
@@ -1185,10 +1269,19 @@ class Config(object):
             setattr(self, 'FOLDER_FORMAT', ann_remove)
             config.set('General', 'folder_format', ann_remove)
 
+        # need to recheck this cause of how enable_ddl and enable_getcomics are now
+        self.ENABLE_GETCOMICS = self.ENABLE_DDL
+        config.set('DDL', 'enable_getcomics', str(self.ENABLE_GETCOMICS))
+
         if not self.DDL_LOCATION:
             self.DDL_LOCATION = self.CACHE_DIR
             if self.ENABLE_DDL is True:
                 logger.info('Setting DDL Location set to : %s' % self.DDL_LOCATION)
+        else:
+            dcreate = filechecker.validateAndCreateDirectory(self.DDL_LOCATION, create=True, dmode='ddl location')
+            if dcreate is False and self.ENABLE_DDL is True:
+                logger.warn('Unable to create ddl_location specified in config: %s. Reverting to default cache location.' % self.DDL_LOCATION)
+                self.DDL_LOCATION = self.CACHE_DIR
 
         if self.MODE_32P is False and self.RSSFEED_32P is not None:
             mylar.KEYS_32P = self.parse_32pfeed(self.RSSFEED_32P)
@@ -1424,10 +1517,11 @@ class Config(object):
             PR_NUM +=1
 
         if self.ENABLE_DDL:
-            PR.append('DDL')
-            PR_NUM +=1
+            if self.ENABLE_GETCOMICS:
+                PR.append('DDL(GetComics)')
+                PR_NUM +=1
 
-        PPR = ['32p', 'nzb.su', 'dognzb', 'Experimental', 'DDL']
+        PPR = ['32p', 'nzb.su', 'dognzb', 'Experimental', 'DDL(GetComics)']
         if self.NEWZNAB:
             for ens in self.EXTRA_NEWZNABS:
                 if str(ens[5]) == '1': # if newznabs are enabled
@@ -1498,7 +1592,7 @@ class Config(object):
                 for d in PPR:
                     #logger.fdebug('checking entry %s against %s' % (PR[i], d) #d['provider'])
                     if d == PR[i]:
-                        x = [p['order_seq'] for p in PROV_ORDER if p['provider'] == PR[i]]
+                        x = [p['order_seq'] for p in PROV_ORDER if p['provider'].lower() == PR[i].lower()]
                         if x:
                             ord = x[0]
                         else:
@@ -1552,6 +1646,8 @@ class Config(object):
         setattr(self, 'PROVIDER_ORDER', PROVIDER_ORDER)
         logger.fdebug('Provider Order is now set : %s ' % self.PROVIDER_ORDER)
 
+        self.write_out_provider_searches()
+
     def write_extras(self, value):
         flattened = []
         for item in value:
@@ -1569,3 +1665,110 @@ class Config(object):
                     ib = i
                 flattened.append(str(ib))
         return flattened
+
+    def write_out_provider_searches(self):
+       # this is needed for rss to work since the provider table isn't written to
+       # until a search is performed
+       myDB = db.DBConnection()
+       chk = myDB.select("SELECT * FROM provider_searches")
+       p_list = {}
+       write = False
+       if chk:
+           for ck in chk:
+               ck_hits = ck['hits']
+               if ck_hits is None:
+                   ck_hits = 0
+               t_id = ck['id']
+               prov_t = ck['provider']
+               if t_id == 'Experimental':
+                   prov_t = 'experimental'
+               #logger.fdebug('[%s] t_id: %s' % (ck['provider'], t_id))
+               if any([t_id == 0, t_id is None]):
+                   # id of 0 means it hasn't been assigned - so we need to assign it before we build out the dict
+                   if 'DDL(GetComics)' in prov_t:
+                       t_id = 200
+                   elif any(['experimental' in prov_t, 'Experimental' in prov_t]):
+                       t_id = 101
+                   elif 'dog' in prov_t:
+                       t_id = 102
+                   elif any(['nzb.su' in prov_t, 'nzbsu' in prov_t]):
+                       t_id = 103
+                   else:
+                       nnf = False
+                       if self.EXTRA_NEWZNABS:
+                           for n in self.EXTRA_NEWZNABS:
+                               if n[0] == prov_t:
+                                   t_id = n[6]
+                                   nnf = True
+                                   break
+                       if nnf is False and self.EXTRA_TORZNABS:
+                           for n in self.EXTRA_TORZNABS:
+                               if n[0] == prov_t:
+                                   t_id = n[6]
+                                   nnf = True
+                                   break
+
+                   t_ctrl = {'id': t_id, 'provider': prov_t}
+                   t_vals = {'active': ck['active'], 'lastrun': ck['lastrun'], 'type': ck['type'], 'hits': ck_hits}
+                   writeout = myDB.upsert("provider_searches", t_vals, t_ctrl)
+               p_list[prov_t] = {'id': t_id, 'active': ck['active'], 'lastrun': ck['lastrun'], 'type': ck['type'], 'hits': ck_hits}
+
+       #logger.fdebug('p_list: %s' % (p_list,))
+       for k, v in self.PROVIDER_ORDER.items():
+           tmp_prov = v
+           if not any(p.lower() == tmp_prov.lower() for p, pv in p_list.items()):
+               write = True
+               #logger.fdebug('%s was not found in search db. Writing it..' % v)
+               if 'DDL(GetComics)' in tmp_prov:
+                   t_type = 'DDL'
+                   t_id = 200
+               elif any(['experimental' in tmp_prov, 'Experimental' in tmp_prov]):
+                   tmp_prov = 'experimental'
+                   t_type = 'experimental'
+                   t_id = 101
+               elif 'dog' in tmp_prov:
+                   t_type = 'dognzb'
+                   t_id = 102
+               elif any(['nzb.su' in tmp_prov, 'nzbsu' in tmp_prov]):
+                   t_type = 'nzb.su'
+                   t_id = 103
+               else:
+                   nnf = False
+                   if self.EXTRA_NEWZNABS:
+                       for n in self.EXTRA_NEWZNABS:
+                           if n[0] == tmp_prov:
+                               t_type = 'newznab'
+                               t_id = n[6]
+                               nnf = True
+                               break
+                   if nnf is False and self.EXTRA_TORZNABS:
+                       for n in self.EXTRA_TORZNABS:
+                           if n[0] == tmp_prov:
+                               t_type = 'torznab'
+                               t_id = n[6]
+                               nnf = True
+                               break
+               ctrls = {'id': t_id, 'provider': tmp_prov}
+               vals = {'active': False, 'lastrun': 0, 'type': t_type, 'hits': 0}
+           else:
+               try:
+                   tprov = [p_list[x] for x, y in p_list.items() if x.lower() == tmp_prov.lower()][0]
+               except Exception:
+                   tprov = None
+
+               if tprov:
+                   if (any(['nzb.su' in tmp_prov, 'nzbsu' in tmp_prov]) and tprov['type'] != 'nzb.su') or (tmp_prov == 'Experimental'):
+                       # needed to ensure the type is set properly for this provider
+                       ptype = tprov['type']
+                       if tmp_prov == 'Experimental':
+                           myDB.action("DELETE FROM provider_searches where id=101")
+                           tmp_prov = 'experimental'
+                       else:
+                           ptype = 'nzb.su'
+                       ctrls = {'id': tprov['id'], 'provider': tmp_prov}
+                       vals = {'active': tprov['active'], 'lastrun': tprov['lastrun'], 'type': ptype, 'hits': tprov['hits']}
+                       write = True
+
+           if write is True:
+               logger.fdebug('writing: keys - %s: vals - %s' % (vals, ctrls))
+               writeout = myDB.upsert("provider_searches", vals, ctrls)

@@ -25,6 +25,7 @@ import sqlite3
 import itertools
 import json
 import requests
+import shlex
 import time
 import csv
 import shutil
@@ -32,6 +33,7 @@ import queue
 import platform
 import locale
 import re
+import random
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -44,6 +46,7 @@ import mylar.config
 
 #these are the globals that are runtime-based (ie. not config-valued at all)
 #they are referenced in other modules just as mylar.VARIABLE (instead of mylar.CONFIG.VARIABLE)
+MINIMUM_PY_VERSION = '3.8.1'
 PROG_DIR = None
 DATA_DIR = None
 FULL_PATH = None
@@ -86,6 +89,13 @@ RSS_STATUS = 'Waiting'
 WEEKLY_STATUS = 'Waiting'
 VERSION_STATUS = 'Waiting'
 UPDATER_STATUS = 'Waiting'
+FORCE_STATUS = {}
+RSS_SCHEDULER = None
+WEEKLY_SCHEDULER = None
+MONITOR_SCHEDULER = None
+SEARCH_SCHEDULER = None
+VERSION_SCHEDULER = None
+UPDATER_SCHEDULER = None
 SCHED_RSS_LAST = None
 SCHED_WEEKLY_LAST = None
 SCHED_MONITOR_LAST = None
@@ -96,6 +106,9 @@ DBUPDATE_INTERVAL = 1440 # 24hrs
 DB_BACKFILL = False
 DBLOCK = False
 DB_FILE = None
+MAINTENANCE_UPDATE = []
+MAINTENANCE_DB_TOTAL = 0
+MAINTENANCE_DB_COUNT = 0
 UMASK = None
 WANTED_TAB_OFF = False
 PULLNEW = None
@@ -159,9 +172,8 @@ DDL_LOCK = False
 CMTAGGER_PATH = None
 STATIC_COMICRN_VERSION = "1.01"
 STATIC_APC_VERSION = "2.04"
-ISSUE_EXCEPTIONS = ['AU', 'AI', 'INH', 'NOW', 'BEY', 'MU', 'HU', 'LR', 'A', 'B', 'C', 'X', 'O','SUMMER', 'SPRING', 'FALL', 'WINTER', 'PREVIEW', 'OMEGA', "DIRECTOR'S CUT", "(DC)"]
+ISSUE_EXCEPTIONS = ['AU', 'AI', 'INH', 'NOW', 'BEY', 'MU', 'HU', 'LR', 'A', 'B', 'C', 'X', 'O','SUMMER', 'SPRING', 'FALL', 'WINTER', 'PREVIEW', 'ALPHA', 'OMEGA', "DIRECTOR'S CUT", "(DC)"]
 SAB_PARAMS = None
-TMP_PROV = None
 EXT_IP = None
 PROVIDER_START_ID=0
 COMICINFO = ()
@@ -169,6 +181,9 @@ CHECK_FOLDER_CACHE = None
 FOLDER_CACHE = None
 GLOBAL_MESSAGES = None
 SSE_KEY = None
+SESSION_ID = None
+UPDATE_VALUE = {}
+REQS = {}
 SCHED = BackgroundScheduler({
                              'apscheduler.executors.default': {
                                  'class':  'apscheduler.executors.pool:ThreadPoolExecutor',
@@ -185,15 +200,17 @@ PROVIDER_STATUS = {}
 def initialize(config_file):
     with INIT_LOCK:
 
-        global CONFIG, _INITIALIZED, QUIET, CONFIG_FILE, OS_DETECT, MAINTENANCE, CURRENT_VERSION, LATEST_VERSION, COMMITS_BEHIND, INSTALL_TYPE, IMPORTLOCK, PULLBYFILE, INKDROPS_32P, \
+        global CONFIG, _INITIALIZED, QUIET, CONFIG_FILE, MINIMUM_PY_VERSION, OS_DETECT, MAINTENANCE, CURRENT_VERSION, LATEST_VERSION, COMMITS_BEHIND, INSTALL_TYPE, IMPORTLOCK, PULLBYFILE, INKDROPS_32P, \
                DONATEBUTTON, CURRENT_WEEKNUMBER, CURRENT_YEAR, UMASK, USER_AGENT, SNATCHED_QUEUE, NZB_QUEUE, PP_QUEUE, SEARCH_QUEUE, DDL_QUEUE, PULLNEW, COMICSORT, WANTED_TAB_OFF, CV_HEADERS, \
                IMPORTBUTTON, IMPORT_FILES, IMPORT_TOTALFILES, IMPORT_CID_COUNT, IMPORT_PARSED_COUNT, IMPORT_FAILURE_COUNT, CHECKENABLED, CVURL, DEMURL, EXPURL, WWTURL, WWT_CF_COOKIEVALUE, \
                DDLPOOL, NZBPOOL, SNPOOL, PPPOOL, SEARCHPOOL, RETURN_THE_NZBQUEUE, MASS_ADD, ADD_LIST, MASS_REFRESH, REFRESH_QUEUE, SSE_KEY, \
                USE_SABNZBD, USE_NZBGET, USE_BLACKHOLE, USE_RTORRENT, USE_UTORRENT, USE_QBITTORRENT, USE_DELUGE, USE_TRANSMISSION, USE_WATCHDIR, SAB_PARAMS, PUBLISHER_IMPRINTS, \
                PROG_DIR, DATA_DIR, CMTAGGER_PATH, DOWNLOAD_APIKEY, LOCAL_IP, STATIC_COMICRN_VERSION, STATIC_APC_VERSION, KEYS_32P, AUTHKEY_32P, FEED_32P, FEEDINFO_32P, \
-               MONITOR_STATUS, SEARCH_STATUS, RSS_STATUS, WEEKLY_STATUS, VERSION_STATUS, UPDATER_STATUS, DBUPDATE_INTERVAL, DB_BACKFILL, LOG_LANG, LOG_CHARSET, APILOCK, SEARCHLOCK, DDL_LOCK, LOG_LEVEL, \
+               MONITOR_STATUS, SEARCH_STATUS, RSS_STATUS, WEEKLY_STATUS, VERSION_STATUS, UPDATER_STATUS, FORCE_STATUS, DBUPDATE_INTERVAL, DB_BACKFILL, LOG_LANG, LOG_CHARSET, APILOCK, SEARCHLOCK, DDL_LOCK, LOG_LEVEL, \
+               MONITOR_SCHEDULER, SEARCH_SCHEDULER, RSS_SCHEDULER, WEEKLY_SCHEDULER, VERSION_SCHEDULER, UPDATER_SCHEDULER, \
                SCHED_RSS_LAST, SCHED_WEEKLY_LAST, SCHED_MONITOR_LAST, SCHED_SEARCH_LAST, SCHED_VERSION_LAST, SCHED_DBUPDATE_LAST, COMICINFO, SEARCH_TIER_DATE, \
-               BACKENDSTATUS_CV, BACKENDSTATUS_WS, PROVIDER_STATUS, TMP_PROV, EXT_IP, ISSUE_EXCEPTIONS, PROVIDER_START_ID, GLOBAL_MESSAGES, CHECK_FOLDER_CACHE, FOLDER_CACHE
+               BACKENDSTATUS_CV, BACKENDSTATUS_WS, PROVIDER_STATUS, EXT_IP, ISSUE_EXCEPTIONS, PROVIDER_START_ID, GLOBAL_MESSAGES, CHECK_FOLDER_CACHE, FOLDER_CACHE, SESSION_ID, \
+               MAINTENANCE_UPDATE, MAINTENANCE_DB_COUNT, MAINTENANCE_DB_TOTAL, UPDATE_VALUE, REQS
 
         cc = mylar.config.Config(config_file)
         CONFIG = cc.read(startup=True)
@@ -209,6 +226,21 @@ def initialize(config_file):
             dbcheck()
         except Exception as e:
             logger.error('Cannot connect to the database: %s' % e)
+        else:
+            if mylar.MAINTENANCE is False:
+                cc.provider_sequence()
+
+            # quick check here to see if a previous db update failed.
+            chk = maintenance.Maintenance(mode='db update')
+            chk.check_failed_update()
+
+            # check to see if any db updates are required / new.
+            chk.db_update_check()
+
+        #set the flag here whether to start it up in maintenance mode or not.
+        #usually it will be based on if a field is present in the db or not.
+        if mylar.MAINTENANCE_UPDATE:
+            mylar.MAINTENANCE = True
 
         if MAINTENANCE is False:
             #try to get the local IP using socket. Get this on every startup so it's at least current for existing session.
@@ -252,13 +284,14 @@ def initialize(config_file):
 
             if mylar.SSE_KEY is None:
                 import hashlib
-                import random
 
                 mylar.SSE_KEY = hashlib.sha224(
                     str(random.getrandbits(256)).encode('utf-8')
                 ).hexdigest()[0:32]
 
-        CV_HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:40.0) Gecko/20100101 Firefox/40.1'}
+        SESSION_ID = random.randint(10000,999999)
+
+        CV_HEADERS = {'User-Agent': mylar.CONFIG.CV_USER_AGENT}
 
         # set the current week for the pull-list
         todaydate = datetime.datetime.today()
@@ -321,16 +354,14 @@ def initialize(config_file):
             if PUBLISHER_IMPRINTS is not None:
                 logger.info('[IMPRINT_LOADS] Successfully loaded imprints for %s publishers' % (len(PUBLISHER_IMPRINTS['publishers'])))
 
+            logger.info('Remapping the sorting to allow for new additions.')
+            COMICSORT = helpers.ComicSort(sequence='startup')
+
         if CONFIG.LOCMOVE:
             helpers.updateComicLocation()
 
         # make sure the intLatestIssue field is populated with values...
-        helpers.latestissue_update()
-
-        #Ordering comics here
-        if mylar.MAINTENANCE is False:
-            logger.info('Remapping the sorting to allow for new additions.')
-            COMICSORT = helpers.ComicSort(sequence='startup')
+        # ??helpers.latestissue_update()
 
         # Store the original umask
         UMASK = os.umask(0)
@@ -341,7 +372,7 @@ def initialize(config_file):
 
 def daemonize():
 
-    if threading.activeCount() != 1:
+    if threading.active_count() != 1:
         logger.warn('There are %r active threads. Daemonizing may cause \
                         strange behavior.' % threading.enumerate())
 
@@ -411,46 +442,82 @@ def start():
 
         if _INITIALIZED:
 
+            #scheduler jobs - add them all in a paused state initially
+            UPDATER_SCHEDULER = SCHED.add_job(func=updater.watchlist_updater, id='dbupdater', next_run_time=datetime.datetime.utcnow(), name='DB Updater', args=[None,True], trigger=IntervalTrigger(hours=0, minutes=DBUPDATE_INTERVAL, timezone='UTC'))
+            UPDATER_SCHEDULER.pause()
+
+            ss = searchit.CurrentSearcher()
+            SEARCH_SCHEDULER = SCHED.add_job(func=ss.run, id='search', next_run_time=datetime.datetime.utcnow(), name='Auto-Search', trigger=IntervalTrigger(hours=0, minutes=CONFIG.SEARCH_INTERVAL, timezone='UTC'))
+            SEARCH_SCHEDULER.pause()
+
+            ws = weeklypullit.Weekly()
+            WEEKLY_SCHEDULER = SCHED.add_job(func=ws.run, id='weekly', name='Weekly Pullist', next_run_time=datetime.datetime.utcnow(), trigger=IntervalTrigger(hours=4, minutes=0, timezone='UTC'))
+            WEEKLY_SCHEDULER.pause()
+
+            rs = rsscheckit.tehMain()
+            RSS_SCHEDULER = SCHED.add_job(func=rs.run, id='rss', name='RSS Feeds', args=[True], next_run_time=datetime.datetime.utcnow(), trigger=IntervalTrigger(hours=0, minutes=int(CONFIG.RSS_CHECKINTERVAL), timezone='UTC'))
+            RSS_SCHEDULER.pause()
+
+            vs = versioncheckit.CheckVersion()
+            VERSION_SCHEDULER = SCHED.add_job(func=vs.run, id='version', name='Check Version', trigger=IntervalTrigger(hours=0, minutes=CONFIG.CHECK_GITHUB_INTERVAL, timezone='UTC'))
+            VERSION_SCHEDULER.pause()
+
+            fm = PostProcessor.FolderCheck()
+            MONITOR_SCHEDULER = SCHED.add_job(func=fm.run, id='monitor', name='Folder Monitor', trigger=IntervalTrigger(hours=0, minutes=int(CONFIG.DOWNLOAD_SCAN_INTERVAL), timezone='UTC'))
+            MONITOR_SCHEDULER.pause()
+
             #load up the previous runs from the job sql table so we know stuff...
-            monitors = helpers.job_management()
-            SCHED_WEEKLY_LAST = monitors['weekly']
-            SCHED_SEARCH_LAST = monitors['search']
-            SCHED_UPDATER_LAST = monitors['dbupdater']
-            SCHED_MONITOR_LAST = monitors['monitor']
-            SCHED_VERSION_LAST = monitors['version']
-            SCHED_RSS_LAST = monitors['rss']
+            monitors = helpers.job_management(startup=True)
+
+            #logger.fdebug('monitors: %s' % (monitors,))
+
+            SCHED_WEEKLY_LAST = monitors['weekly']['last']
+            SCHED_SEARCH_LAST = monitors['search']['last']
+            SCHED_UPDATER_LAST = monitors['updater']['last']
+            SCHED_MONITOR_LAST = monitors['monitor']['last']
+            SCHED_VERSION_LAST = monitors['version']['last']
+            SCHED_RSS_LAST = monitors['rss']['last']
 
             # Start our scheduled background tasks
             if UPDATER_STATUS != 'Paused':
                 # we want to run the db updater on every startup regardless of last run
                 # this will ensure we get better coverage, and if nothing has updated it
                 # will just return to the normal dbupdater_interval duration.
-                SCHED.add_job(func=updater.watchlist_updater, id='dbupdater', next_run_time=datetime.datetime.utcnow(), name='DB Updater', args=[None,True], trigger=IntervalTrigger(hours=0, minutes=DBUPDATE_INTERVAL, timezone='UTC'))
-                logger.info('[DB UPDATER] DB Updater scheduled to run immediately.')
+                if SCHED_UPDATER_LAST is not None:
+                    updater_timestamp = float(SCHED_UPDATER_LAST)
+                    logger.fdebug('[DB UPDATER] Updater last run @ %s' % helpers.utc_date_to_local(datetime.datetime.utcfromtimestamp(updater_timestamp)))
+                else:
+                    updater_timestamp = helpers.utctimestamp() + (int(DBUPDATE_INTERVAL) *60)
+
+                updater_diff = (helpers.utctimestamp() - updater_timestamp)/60
+                if updater_diff >= int(DBUPDATE_INTERVAL):
+                    logger.fdebug('[DB UPDATER] DB Updater scheduled to run immediately.')
+                    UPDATER_SCHEDULER.modify(next_run_time=(datetime.datetime.utcnow()))
+                else:
+                    updater_diff = datetime.datetime.utcfromtimestamp(helpers.utctimestamp() + ((int(DBUPDATE_INTERVAL) * 60)  - (updater_diff*60)))
+                    logger.fdebug('[DB UPDATER] Scheduling next run @ %s (every %s minutes)' % (helpers.utc_date_to_local(updater_diff), DBUPDATE_INTERVAL))
+                    UPDATER_SCHEDULER.modify(next_run_time=updater_diff)
 
             #let's do a run at the Wanted issues here (on startup) if enabled.
             if SEARCH_STATUS != 'Paused':
-                ss = searchit.CurrentSearcher()
                 if CONFIG.NZB_STARTUP_SEARCH:
-                    SCHED.add_job(func=ss.run, id='search', next_run_time=datetime.datetime.utcnow(), name='Auto-Search', trigger=IntervalTrigger(hours=0, minutes=CONFIG.SEARCH_INTERVAL, timezone='UTC'))
+                    # now + 2 minute startup delay
+                    SEARCH_SCHEDULER.modify(next_run_time=(datetime.datetime.utcnow() + timedelta(minutes=2)))
                 else:
                     if SCHED_SEARCH_LAST is not None:
                         search_timestamp = float(SCHED_SEARCH_LAST)
-                        logger.fdebug('[AUTO-SEARCH] Search last run @ %s' % datetime.datetime.utcfromtimestamp(search_timestamp))
+                        logger.fdebug('[AUTO-SEARCH] Search last run @ %s' % helpers.utc_date_to_local(datetime.datetime.utcfromtimestamp(search_timestamp)))
                     else:
                         search_timestamp = helpers.utctimestamp() + (int(CONFIG.SEARCH_INTERVAL) *60)
 
                     duration_diff = (helpers.utctimestamp() - search_timestamp)/60
                     if duration_diff >= int(CONFIG.SEARCH_INTERVAL):
                         logger.fdebug('[AUTO-SEARCH]Auto-Search set to an initial delay of 2 minutes before initialization as it has been %s minutes since the last run' % duration_diff)
-                        SCHED.add_job(func=ss.run, id='search', name='Auto-Search', next_run_time=(datetime.datetime.utcnow() + timedelta(minutes=2)), trigger=IntervalTrigger(hours=0, minutes=CONFIG.SEARCH_INTERVAL, timezone='UTC'))
+                        SEARCH_SCHEDULER.modify(next_run_time=(datetime.datetime.utcnow() + timedelta(minutes=2)))
                     else:
                         search_diff = datetime.datetime.utcfromtimestamp(helpers.utctimestamp() + ((int(CONFIG.SEARCH_INTERVAL) * 60)  - (duration_diff*60)))
-                        logger.fdebug('[AUTO-SEARCH] Scheduling next run @ %s (every %s minutes)' % (search_diff, CONFIG.SEARCH_INTERVAL))
-                        SCHED.add_job(func=ss.run, id='search', name='Auto-Search', next_run_time=search_diff, trigger=IntervalTrigger(hours=0, minutes=CONFIG.SEARCH_INTERVAL, timezone='UTC'))
-            else:
-                ss = searchit.CurrentSearcher()
-                SCHED.add_job(func=ss.run, id='search', name='Auto-Search', next_run_time=None, trigger=IntervalTrigger(hours=0, minutes=CONFIG.SEARCH_INTERVAL, timezone='UTC'))
+                        logger.fdebug('[AUTO-SEARCH] Scheduling next run @ %s (every %s minutes)' % (helpers.utc_date_to_local(search_diff), CONFIG.SEARCH_INTERVAL))
+                        SEARCH_SCHEDULER.modify(next_run_time=search_diff)
 
             #thread queue control..
             queue_schedule('search_queue', 'start')
@@ -492,57 +559,51 @@ def start():
             else:
                 weekly_timestamp = weektimestamp + weekly_interval
 
-            ws = weeklypullit.Weekly()
             duration_diff = (weektimestamp - weekly_timestamp)/60
 
             if WEEKLY_STATUS != 'Paused':
                 if abs(duration_diff) >= weekly_interval/60:
                     logger.info('[WEEKLY] Weekly Pull-Update initializing immediately as it has been %s hours since the last run' % abs(duration_diff/60))
-                    SCHED.add_job(func=ws.run, id='weekly', name='Weekly Pullist', next_run_time=datetime.datetime.utcnow(), trigger=IntervalTrigger(hours=weektimer, minutes=0, timezone='UTC'))
+                    WEEKLY_SCHEDULER.modify(next_run_time=datetime.datetime.utcnow())
                 else:
                     weekly_diff = datetime.datetime.utcfromtimestamp(weektimestamp + (weekly_interval - (duration_diff * 60)))
-                    logger.fdebug('[WEEKLY] Scheduling next run for @ %s every %s hours' % (weekly_diff, weektimer))
-                    SCHED.add_job(func=ws.run, id='weekly', name='Weekly Pullist', next_run_time=weekly_diff, trigger=IntervalTrigger(hours=weektimer, minutes=0, timezone='UTC'))
+                    logger.fdebug('[WEEKLY] Scheduling next run for @ %s every %s hours' % (helpers.utc_date_to_local(weekly_diff), weektimer))
+                    WEEKLY_SCHEDULER.modify(next_run_time=weekly_diff)
 
             #initiate startup rss feeds for torrents/nzbs here...
-            rs = rsscheckit.tehMain()
-            if CONFIG.ENABLE_RSS is True:
+            if RSS_STATUS != 'Paused':
                 logger.info('[RSS-FEEDS] Initiating startup-RSS feed checks.')
                 if SCHED_RSS_LAST is not None:
                     rss_timestamp = float(SCHED_RSS_LAST)
-                    logger.info('[RSS-FEEDS] RSS last run @ %s' % datetime.datetime.utcfromtimestamp(rss_timestamp))
+                    logger.info('[RSS-FEEDS] RSS last run @ %s' % helpers.utc_date_to_local(datetime.datetime.utcfromtimestamp(rss_timestamp)))
                 else:
                     rss_timestamp = helpers.utctimestamp() + (int(CONFIG.RSS_CHECKINTERVAL) *60)
                 duration_diff = (helpers.utctimestamp() - rss_timestamp)/60
                 if duration_diff >= int(CONFIG.RSS_CHECKINTERVAL):
-                    SCHED.add_job(func=rs.run, id='rss', name='RSS Feeds', args=[True], next_run_time=datetime.datetime.utcnow(), trigger=IntervalTrigger(hours=0, minutes=int(CONFIG.RSS_CHECKINTERVAL), timezone='UTC'))
+                    RSS_SCHEDULER.modify(next_run_time=datetime.datetime.utcnow())
                 else:
                     rss_diff = datetime.datetime.utcfromtimestamp(helpers.utctimestamp() + (int(CONFIG.RSS_CHECKINTERVAL) * 60) - (duration_diff * 60))
-                    logger.fdebug('[RSS-FEEDS] Scheduling next run for @ %s every %s minutes' % (rss_diff, CONFIG.RSS_CHECKINTERVAL))
-                    SCHED.add_job(func=rs.run, id='rss', name='RSS Feeds', args=[True], next_run_time=rss_diff, trigger=IntervalTrigger(hours=0, minutes=int(CONFIG.RSS_CHECKINTERVAL), timezone='UTC'))
-            else:
-                 RSS_STATUS = 'Paused'
-            #    SCHED.add_job(func=rs.run, id='rss', name='RSS Feeds', args=[True], trigger=IntervalTrigger(hours=0, minutes=int(CONFIG.RSS_CHECKINTERVAL), timezone='UTC'))
-            #    SCHED.pause_job('rss')
+                    logger.fdebug('[RSS-FEEDS] Scheduling next run for @ %s every %s minutes' % (helpers.utc_date_to_local(rss_diff), CONFIG.RSS_CHECKINTERVAL))
+                    RSS_SCHEDULER.modify(next_run_time=rss_diff)
 
-            if CONFIG.CHECK_GITHUB:
-                vs = versioncheckit.CheckVersion()
-                SCHED.add_job(func=vs.run, id='version', name='Check Version', trigger=IntervalTrigger(hours=0, minutes=CONFIG.CHECK_GITHUB_INTERVAL, timezone='UTC'))
-            else:
-                VERSION_STATUS = 'Paused'
+            if VERSION_STATUS != 'Paused':
+                VERSION_SCHEDULER.resume()
 
             ##run checkFolder every X minutes (basically Manual Run Post-Processing)
-            if CONFIG.ENABLE_CHECK_FOLDER:
-                if CONFIG.DOWNLOAD_SCAN_INTERVAL >0:
-                    logger.info('[FOLDER MONITOR] Enabling folder monitor for : ' + str(CONFIG.CHECK_FOLDER) + ' every ' + str(CONFIG.DOWNLOAD_SCAN_INTERVAL) + ' minutes.')
-                    fm = PostProcessor.FolderCheck()
-                    SCHED.add_job(func=fm.run, id='monitor', name='Folder Monitor', trigger=IntervalTrigger(hours=0, minutes=int(CONFIG.DOWNLOAD_SCAN_INTERVAL), timezone='UTC'))
+            if MONITOR_STATUS != 'Paused':
+                if CONFIG.CHECK_FOLDER is not None:
+                    if CONFIG.DOWNLOAD_SCAN_INTERVAL >0:
+                        logger.info('[FOLDER MONITOR] Enabling folder monitor for : ' + str(CONFIG.CHECK_FOLDER) + ' every ' + str(CONFIG.DOWNLOAD_SCAN_INTERVAL) + ' minutes.')
+                        MONITOR_SCHEDULER.resume()
+                    else:
+                        logger.error('[FOLDER MONITOR] You need to specify a monitoring time for the check folder option to work')
+                        MONITOR_SCHEDULER.pause()
                 else:
-                    logger.error('[FOLDER MONITOR] You need to specify a monitoring time for the check folder option to work')
-            else:
-                MONITOR_STATUS = 'Paused'
+                    logger.error('[FOLDER MONITOR] You need to specify a location in order to use the Folder Monitor. Disabling Folder Monitor')
+                    MONITOR_SCHEDULER.pause()
 
             logger.info('Firing up the Background Schedulers now....')
+
             try:
                 SCHED.start()
                 #update the job db here
@@ -561,7 +622,7 @@ def queue_schedule(queuetype, mode):
     if mode == 'start':
         if queuetype == 'snatched_queue':
             try:
-                if mylar.SNPOOL.isAlive() is True:
+                if mylar.SNPOOL.is_alive() is True:
                     return
             except Exception as e:
                 pass
@@ -573,7 +634,7 @@ def queue_schedule(queuetype, mode):
 
         elif queuetype == 'nzb_queue':
             try:
-                if mylar.NZBPOOL.isAlive() is True:
+                if mylar.NZBPOOL.is_alive() is True:
                     return
             except Exception as e:
                 pass
@@ -591,7 +652,7 @@ def queue_schedule(queuetype, mode):
 
         elif queuetype == 'search_queue':
             try:
-                if mylar.SEARCHPOOL.isAlive() is True:
+                if mylar.SEARCHPOOL.is_alive() is True:
                     return
             except Exception as e:
                 pass
@@ -602,7 +663,7 @@ def queue_schedule(queuetype, mode):
             logger.info('[SEARCH-QUEUE] Successfully started the Search Queuer...')
         elif queuetype == 'pp_queue':
             try:
-                if mylar.PPPOOL.isAlive() is True:
+                if mylar.PPPOOL.is_alive() is True:
                     return
             except Exception as e:
                 pass
@@ -614,7 +675,7 @@ def queue_schedule(queuetype, mode):
 
         elif queuetype == 'ddl_queue':
             try:
-                if mylar.DDLPOOL.isAlive() is True:
+                if mylar.DDLPOOL.is_alive() is True:
                     return
             except Exception as e:
                 pass
@@ -627,7 +688,7 @@ def queue_schedule(queuetype, mode):
     else:
         if (queuetype == 'nzb_queue') or mode == 'shutdown':
             try:
-                if mylar.NZBPOOL.isAlive() is False:
+                if mylar.NZBPOOL.is_alive() is False:
                     return
                 elif all([mode!= 'shutdown', mylar.CONFIG.POST_PROCESSING is True]) and ( all([mylar.CONFIG.NZB_DOWNLOADER == 0, mylar.CONFIG.SAB_CLIENT_POST_PROCESSING is True]) or all([mylar.CONFIG.NZB_DOWNLOADER == 1, mylar.CONFIG.NZBGET_CLIENT_POST_PROCESSING is True]) ):
                     return
@@ -649,7 +710,7 @@ def queue_schedule(queuetype, mode):
 
         if (queuetype == 'snatched_queue') or mode == 'shutdown':
             try:
-                if mylar.SNPOOL.isAlive() is False:
+                if mylar.SNPOOL.is_alive() is False:
                     return
                 elif all([mode != 'shutdown', mylar.CONFIG.ENABLE_TORRENTS is True, mylar.CONFIG.AUTO_SNATCH is True, OS_DETECT != 'Windows']) and any([mylar.CONFIG.TORRENT_DOWNLOADER == 2, mylar.CONFIG.TORRENT_DOWNLOADER == 4]):
                     return
@@ -671,7 +732,7 @@ def queue_schedule(queuetype, mode):
 
         if (queuetype == 'search_queue') or mode == 'shutdown':
             try:
-                if mylar.SEARCHPOOL.isAlive() is False:
+                if mylar.SEARCHPOOL.is_alive() is False:
                     return
             except Exception as e:
                 return
@@ -690,7 +751,7 @@ def queue_schedule(queuetype, mode):
 
         if (queuetype == 'pp_queue') or mode == 'shutdown':
             try:
-                if mylar.PPPOOL.isAlive() is False:
+                if mylar.PPPOOL.is_alive() is False:
                     return
                 elif all([mylar.CONFIG.POST_PROCESSING is True, mode != 'shutdown']):
                     return
@@ -711,7 +772,7 @@ def queue_schedule(queuetype, mode):
 
         if (queuetype == 'ddl_queue') or mode == 'shutdown':
             try:
-                if mylar.DDLPOOL.isAlive() is False:
+                if mylar.DDLPOOL.is_alive() is False:
                     return
                 elif all([mylar.CONFIG.ENABLE_DDL is True, mode != 'shutdown']):
                     return
@@ -743,14 +804,14 @@ def dbcheck():
         c.execute('SELECT ReleaseDate from storyarcs')
     except sqlite3.OperationalError:
         try:
-            c.execute('CREATE TABLE IF NOT EXISTS storyarcs(StoryArcID TEXT, ComicName TEXT, IssueNumber TEXT, SeriesYear TEXT, IssueYEAR TEXT, StoryArc TEXT, TotalIssues TEXT, Status TEXT, inCacheDir TEXT, Location TEXT, IssueArcID TEXT, ReadingOrder INT, IssueID TEXT, ComicID TEXT, ReleaseDate TEXT, IssueDate TEXT, Publisher TEXT, IssuePublisher TEXT, IssueName TEXT, CV_ArcID TEXT, Int_IssueNumber INT, DynamicComicName TEXT, Volume TEXT, Manual TEXT, DateAdded TEXT, DigitalDate TEXT, Type TEXT, Aliases TEXT)')
+            c.execute('CREATE TABLE IF NOT EXISTS storyarcs(StoryArcID TEXT, ComicName TEXT, IssueNumber TEXT, SeriesYear TEXT, IssueYEAR TEXT, StoryArc TEXT, TotalIssues TEXT, Status TEXT, inCacheDir TEXT, Location TEXT, IssueArcID TEXT, ReadingOrder INT, IssueID TEXT, ComicID TEXT, ReleaseDate TEXT, IssueDate TEXT, Publisher TEXT, IssuePublisher TEXT, IssueName TEXT, CV_ArcID TEXT, Int_IssueNumber INT, DynamicComicName TEXT, Volume TEXT, Manual TEXT, DateAdded TEXT, DigitalDate TEXT, Type TEXT, Aliases TEXT, ArcImage TEXT)')
             c.execute('INSERT INTO storyarcs(StoryArcID, ComicName, IssueNumber, SeriesYear, IssueYEAR, StoryArc, TotalIssues, Status, inCacheDir, Location, IssueArcID, ReadingOrder, IssueID, ComicID, ReleaseDate, IssueDate, Publisher, IssuePublisher, IssueName, CV_ArcID, Int_IssueNumber, DynamicComicName, Volume, Manual) SELECT StoryArcID, ComicName, IssueNumber, SeriesYear, IssueYEAR, StoryArc, TotalIssues, Status, inCacheDir, Location, IssueArcID, ReadingOrder, IssueID, ComicID, StoreDate, IssueDate, Publisher, IssuePublisher, IssueName, CV_ArcID, Int_IssueNumber, DynamicComicName, Volume, Manual FROM readinglist')
             c.execute('DROP TABLE readinglist')
         except sqlite3.OperationalError:
             logger.warn('Unable to update readinglist table to new storyarc table format.')
 
     c.execute('CREATE TABLE IF NOT EXISTS comics (ComicID TEXT UNIQUE, ComicName TEXT, ComicSortName TEXT, ComicYear TEXT, DateAdded TEXT, Status TEXT, IncludeExtras INTEGER, Have INTEGER, Total INTEGER, ComicImage TEXT, FirstImageSize INTEGER, ComicPublisher TEXT, PublisherImprint TEXT, ComicLocation TEXT, ComicPublished TEXT, NewPublish TEXT, LatestIssue TEXT, intLatestIssue INT, LatestDate TEXT, Description TEXT, DescriptionEdit TEXT, QUALalt_vers TEXT, QUALtype TEXT, QUALscanner TEXT, QUALquality TEXT, LastUpdated TEXT, AlternateSearch TEXT, UseFuzzy TEXT, ComicVersion TEXT, SortOrder INTEGER, DetailURL TEXT, ForceContinuing INTEGER, ComicName_Filesafe TEXT, AlternateFileName TEXT, ComicImageURL TEXT, ComicImageALTURL TEXT, DynamicComicName TEXT, AllowPacks TEXT, Type TEXT, Corrected_SeriesYear TEXT, Corrected_Type TEXT, TorrentID_32P TEXT, LatestIssueID TEXT, Collects CLOB, IgnoreType INTEGER, AgeRating TEXT, FilesUpdated TEXT, seriesjsonPresent INT, dirlocked INTEGER)')
-    c.execute('CREATE TABLE IF NOT EXISTS issues (IssueID TEXT, ComicName TEXT, IssueName TEXT, Issue_Number TEXT, DateAdded TEXT, Status TEXT, Type TEXT, ComicID TEXT, ArtworkURL Text, ReleaseDate TEXT, Location TEXT, IssueDate TEXT, DigitalDate TEXT, Int_IssueNumber INT, ComicSize TEXT, AltIssueNumber TEXT, IssueDate_Edit TEXT, ImageURL TEXT, ImageURL_ALT TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS issues (IssueID TEXT, ComicName TEXT, IssueName TEXT, Issue_Number TEXT, DateAdded TEXT, Status TEXT, Type TEXT, ComicID TEXT, ArtworkURL Text, ReleaseDate TEXT, Location TEXT, IssueDate TEXT, DigitalDate TEXT, Int_IssueNumber INT, ComicSize TEXT, AltIssueNumber TEXT, IssueDate_Edit TEXT, ImageURL TEXT, ImageURL_ALT TEXT, forced_file INT)')
     c.execute('CREATE TABLE IF NOT EXISTS snatched (IssueID TEXT, ComicName TEXT, Issue_Number TEXT, Size INTEGER, DateAdded TEXT, Status TEXT, FolderName TEXT, ComicID TEXT, Provider TEXT, Hash TEXT, crc TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS upcoming (ComicName TEXT, IssueNumber TEXT, ComicID TEXT, IssueID TEXT, IssueDate TEXT, Status TEXT, DisplayComicName TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS nzblog (IssueID TEXT, NZBName TEXT, SARC TEXT, PROVIDER TEXT, ID TEXT, AltNZBName TEXT, OneOff TEXT)')
@@ -758,7 +819,7 @@ def dbcheck():
     c.execute('CREATE TABLE IF NOT EXISTS importresults (impID TEXT, ComicName TEXT, ComicYear TEXT, Status TEXT, ImportDate TEXT, ComicFilename TEXT, ComicLocation TEXT, WatchMatch TEXT, DisplayName TEXT, SRID TEXT, ComicID TEXT, IssueID TEXT, Volume TEXT, IssueNumber TEXT, DynamicName TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS readlist (IssueID TEXT, ComicName TEXT, Issue_Number TEXT, Status TEXT, DateAdded TEXT, Location TEXT, inCacheDir TEXT, SeriesYear TEXT, ComicID TEXT, StatusChange TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS annuals (IssueID TEXT, Issue_Number TEXT, IssueName TEXT, IssueDate TEXT, Status TEXT, ComicID TEXT, GCDComicID TEXT, Location TEXT, ComicSize TEXT, Int_IssueNumber INT, ComicName TEXT, ReleaseDate TEXT, DigitalDate TEXT, ReleaseComicID TEXT, ReleaseComicName TEXT, IssueDate_Edit TEXT, DateAdded TEXT, Deleted INT DEFAULT 0)')
-    c.execute('CREATE TABLE IF NOT EXISTS rssdb (Title TEXT UNIQUE, Link TEXT, Pubdate TEXT, Site TEXT, Size TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS rssdb (Title TEXT UNIQUE, Link TEXT, Pubdate TEXT, Site TEXT, Size TEXT, Issue_Number TEXT, ComicName TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS futureupcoming (ComicName TEXT, IssueNumber TEXT, ComicID TEXT, IssueID TEXT, IssueDate TEXT, Publisher TEXT, Status TEXT, DisplayComicName TEXT, weeknumber TEXT, year TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS failed (ID TEXT, Status TEXT, ComicID TEXT, IssueID TEXT, Provider TEXT, ComicName TEXT, Issue_Number TEXT, NZBName TEXT, DateFailed TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS searchresults (SRID TEXT, results Numeric, Series TEXT, publisher TEXT, haveit TEXT, name TEXT, deck TEXT, url TEXT, description TEXT, comicid TEXT, comicimage TEXT, issues TEXT, comicyear TEXT, ogcname TEXT)')
@@ -766,9 +827,13 @@ def dbcheck():
     c.execute('CREATE TABLE IF NOT EXISTS oneoffhistory (ComicName TEXT, IssueNumber TEXT, ComicID TEXT, IssueID TEXT, Status TEXT, weeknumber TEXT, year TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS jobhistory (JobName TEXT, prev_run_datetime timestamp, prev_run_timestamp REAL, next_run_datetime timestamp, next_run_timestamp REAL, last_run_completed TEXT, successful_completions TEXT, failed_completions TEXT, status TEXT, last_date timestamp)')
     c.execute('CREATE TABLE IF NOT EXISTS manualresults (provider TEXT, id TEXT, kind TEXT, comicname TEXT, volume TEXT, oneoff TEXT, fullprov TEXT, issuenumber TEXT, modcomicname TEXT, name TEXT, link TEXT, size TEXT, pack_numbers TEXT, pack_issuelist TEXT, comicyear TEXT, issuedate TEXT, tmpprov TEXT, pack TEXT, issueid TEXT, comicid TEXT, sarc TEXT, issuearcid TEXT)')
-    c.execute('CREATE TABLE IF NOT EXISTS storyarcs(StoryArcID TEXT, ComicName TEXT, IssueNumber TEXT, SeriesYear TEXT, IssueYEAR TEXT, StoryArc TEXT, TotalIssues TEXT, Status TEXT, inCacheDir TEXT, Location TEXT, IssueArcID TEXT, ReadingOrder INT, IssueID TEXT, ComicID TEXT, ReleaseDate TEXT, IssueDate TEXT, Publisher TEXT, IssuePublisher TEXT, IssueName TEXT, CV_ArcID TEXT, Int_IssueNumber INT, DynamicComicName TEXT, Volume TEXT, Manual TEXT, DateAdded TEXT, DigitalDate TEXT, Type TEXT, Aliases TEXT)')
-    c.execute('CREATE TABLE IF NOT EXISTS ddl_info (ID TEXT UNIQUE, series TEXT, year TEXT, filename TEXT, size TEXT, issueid TEXT, comicid TEXT, link TEXT, status TEXT, remote_filesize TEXT, updated_date TEXT, mainlink TEXT, issues TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS storyarcs(StoryArcID TEXT, ComicName TEXT, IssueNumber TEXT, SeriesYear TEXT, IssueYEAR TEXT, StoryArc TEXT, TotalIssues TEXT, Status TEXT, inCacheDir TEXT, Location TEXT, IssueArcID TEXT, ReadingOrder INT, IssueID TEXT, ComicID TEXT, ReleaseDate TEXT, IssueDate TEXT, Publisher TEXT, IssuePublisher TEXT, IssueName TEXT, CV_ArcID TEXT, Int_IssueNumber INT, DynamicComicName TEXT, Volume TEXT, Manual TEXT, DateAdded TEXT, DigitalDate TEXT, Type TEXT, Aliases TEXT, ArcImage TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS ddl_info (ID TEXT UNIQUE, series TEXT, year TEXT, filename TEXT, size TEXT, issueid TEXT, comicid TEXT, link TEXT, status TEXT, remote_filesize TEXT, updated_date TEXT, mainlink TEXT, issues TEXT, site TEXT, submit_date TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS exceptions_log(date TEXT UNIQUE, comicname TEXT, issuenumber TEXT, seriesyear TEXT, issueid TEXT, comicid TEXT, booktype TEXT, searchmode TEXT, error TEXT, error_text TEXT, filename TEXT, line_num TEXT, func_name TEXT, traceback TEXT)')
+    c.execute('CREATE TABLE IF NOT EXISTS tmp_searches (query_id INTEGER, comicid INTEGER, comicname TEXT, publisher TEXT, publisherimprint TEXT, comicyear TEXT, issues TEXT, volume TEXT, deck TEXT, url TEXT, type TEXT, cvarcid TEXT, arclist TEXT, description TEXT, haveit TEXT, mode TEXT, searchtype TEXT, comicimage TEXT, thumbimage TEXT, PRIMARY KEY (query_id, comicid))')
+    c.execute('CREATE TABLE IF NOT EXISTS notifs(session_id INT, date TEXT, event TEXT, comicid TEXT, comicname TEXT, issuenumber TEXT, seriesyear TEXT, status TEXT, message TEXT, PRIMARY KEY (session_id, date))')
+    c.execute('CREATE TABLE IF NOT EXISTS provider_searches(id INTEGER UNIQUE, provider TEXT UNIQUE, type TEXT, lastrun INTEGER, active TEXT, hits INTEGER DEFAULT 0)')
+    c.execute('CREATE TABLE IF NOT EXISTS mylar_info(DatabaseVersion INTEGER PRIMARY KEY)')
     conn.commit
     c.close
 
@@ -781,6 +846,19 @@ def dbcheck():
     #c.execute('''PRAGMA journal_mode = WAL''')
 
     #add in the late players to the game....
+
+    # -- mylar info table --
+    try:
+        bdc = c.execute('SELECT DatabaseVersion from mylar_info')
+    except sqlite3.OperationalError:
+        c.execute('ALTER TABLE mylar_info ADD COLUMN DatabaseVersion INTEGER PRIMARY KEY')
+        c.execute("INSERT INTO mylar_info(DatabaseVersion) VALUES(0)")
+    else:
+        bc = bdc.fetchone()
+        if any([not bc, bc is None]):
+            #version is null - set the default version now.
+            c.execute("INSERT INTO mylar_info(DatabaseVersion) VALUES(0)")
+
     # -- Comics Table --
 
     try:
@@ -989,6 +1067,11 @@ def dbcheck():
         c.execute('SELECT DigitalDate from issues')
     except sqlite3.OperationalError:
         c.execute('ALTER TABLE issues ADD COLUMN DigitalDate TEXT')
+
+    try:
+        c.execute('SELECT forced_file from issues')
+    except sqlite3.OperationalError:
+        c.execute('ALTER TABLE issues ADD COLUMN forced_file INT')
 
     ## -- ImportResults Table --
 
@@ -1236,6 +1319,19 @@ def dbcheck():
     except sqlite3.OperationalError:
         c.execute('ALTER TABLE annuals ADD COLUMN Deleted INT DEFAULT 0')
 
+    ## -- rssdb Table --
+    #to_the_rss_update = False
+    #try:
+    #    c.execute('SELECT Issue_Number from rssdb')
+    #except sqlite3.OperationalError:
+    #    c.execute('ALTER TABLE rssdb ADD COLUMN Issue_Number TEXT')
+    #    to_the_rss_update = True
+
+    #try:
+    #    c.execute('SELECT ComicName from rssdb')
+    #except sqlite3.OperationalError:
+    #    c.execute('ALTER TABLE rssdb ADD COLUMN ComicName TEXT')
+
     ## -- Snatched Table --
 
     try:
@@ -1343,6 +1439,11 @@ def dbcheck():
     except sqlite3.OperationalError:
         c.execute('ALTER TABLE storyarcs ADD COLUMN Aliases TEXT')
 
+    try:
+        c.execute('SELECT ArcImage from storyarcs')
+    except sqlite3.OperationalError:
+        c.execute('ALTER TABLE storyarcs ADD COLUMN ArcImage TEXT')
+
     ## -- searchresults Table --
     try:
         c.execute('SELECT SRID from searchresults')
@@ -1398,9 +1499,13 @@ def dbcheck():
     # so it can stagger the requests across an hr or more
     try:
         c.execute('SELECT last_date from jobhistory')
-    except sqlite3.OperationalError:
-        c.execute('ALTER TABLE jobhistory ADD COLUMN last_date timestamp')
-        mylar.DB_BACKFILL = True
+    except (sqlite3.OperationalError, Exception) as e:
+        try:
+            c.execute('ALTER TABLE jobhistory ADD COLUMN last_date timestamp')
+        except (sqlite3.OperationalError, Exception) as e:
+            mylar.DB_BACKFILL = False # table already exists but something about last_date is f'd
+        else:
+            mylar.DB_BACKFILL = True
     else:
         mylar.DB_BACKFILL = False
 
@@ -1424,6 +1529,27 @@ def dbcheck():
         c.execute('SELECT issues from ddl_info')
     except sqlite3.OperationalError:
         c.execute('ALTER TABLE ddl_info ADD COLUMN issues TEXT')
+
+    try:
+        c.execute('SELECT site from ddl_info')
+    except sqlite3.OperationalError:
+        c.execute('ALTER TABLE ddl_info ADD COLUMN site TEXT')
+
+    try:
+        c.execute('SELECT submit_date from ddl_info')
+    except sqlite3.OperationalError:
+        c.execute('ALTER TABLE ddl_info ADD COLUMN submit_date TEXT')
+
+    ## -- provider_searches Table --
+    try:
+        c.execute('SELECT id from provider_searches')
+    except sqlite3.OperationalError:
+        c.execute('ALTER TABLE provider_searches ADD COLUMN id INTEGER')
+
+    try:
+        c.execute('SELECT hits from provider_searches')
+    except sqlite3.OperationalError:
+        c.execute('ALTER TABLE provider_searches ADD COLUMN hits INTEGER DEFAULT 0')
 
     #if it's prior to Wednesday, the issue counts will be inflated by one as the online db's everywhere
     #prepare for the next 'new' release of a series. It's caught in updater.py, so let's just store the
@@ -1467,18 +1593,29 @@ def dbcheck():
     except Exception:
         pass
 
-    job_listing = c.execute('SELECT * FROM jobhistory')
-    job_history = []
-    for jh in job_listing:
-        job_history.append(jh)
 
-    #logger.fdebug('job_history loaded: %s' % job_history)
+    #update tables here as necessary based on current version of mylar.
+    #this won't be written to the ini until a save of the config after load, but it should be oldconfig_version+1 on load
+    logger.info('[%s]oldconfig_version: %s' % (type(mylar.CONFIG.OLDCONFIG_VERSION), mylar.CONFIG.OLDCONFIG_VERSION))
+    if mylar.CONFIG.OLDCONFIG_VERSION is not None:
+        if int(mylar.CONFIG.OLDCONFIG_VERSION) < 12:
+            logger.info('now updating table data to ensure DDL is properly populated with correct data.')
+            c.execute("UPDATE snatched SET Provider = 'DDL(GetComics)' WHERE Provider = 'ddl'")
+            c.execute("UPDATE nzblog SET PROVIDER = 'DDL(GetComics)' WHERE PROVIDER = 'ddl'")
+            c.execute("UPDATE rssdb SET site = 'DDL(GetComics)' WHERE site = 'DDL'")
+            c.execute("UPDATE ddl_info SET site = 'DDL(GetComics)' WHERE site is NULL")
+
     conn.commit()
     c.close()
 
     if dynamic_upgrade is True:
         logger.info('Updating db to include some important changes.')
         helpers.upgrade_dynamic()
+
+    #if to_the_rss_update is True:
+    #    mylar.MAINTENANCE = True
+    #    mylar.MAINTENANCE_DB_TOTAL = 1 # set this to 1 to kick it.
+
 
 def halt():
     global _INITIALIZED, started
@@ -1532,10 +1669,14 @@ def shutdown(restart=False, update=False, maintenance=False):
         if 'maintenance' not in ARGS:
             popen_list += ARGS
         else:
+            plist = []
             for x in ARGS:
-                if all([x != 'maintenance', x != '-u']):
-                    popen_list += x
+                if x != 'maintenance':
+                    plist.append(x)
+                else:
+                    break
+            popen_list.extend(plist)
         logger.info('Restarting Mylar with ' + str(popen_list))
-        subprocess.Popen(popen_list, cwd=os.getcwd())
+        os.execv(sys.executable, popen_list)
 
     os._exit(0)

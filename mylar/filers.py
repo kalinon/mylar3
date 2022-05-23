@@ -70,7 +70,7 @@ class FileHandlers(object):
 
     def folder_create(self, booktype=None, update_loc=None, secondary=None, imprint=None):
         # dictionary needs to passed called comic with
-        #  {'ComicPublisher', 'CorrectedType, 'Type', 'ComicYear', 'ComicName', 'ComicVersion'}
+        #  {'ComicPublisher', 'Corrected_Type, 'Type', 'ComicYear', 'ComicName', 'ComicVersion'}
         # or pass in comicid value from __init__
 
         # setup default location here
@@ -87,12 +87,19 @@ class FileHandlers(object):
         if folder_format is None:
             folder_format = '$Series ($Year)'
 
+        publisher = re.sub('!', '', self.comic['ComicPublisher']) # thanks Boom!
+        publisher = helpers.filesafe(publisher)
+
         if mylar.OS_DETECT == 'Windows':
             if '/' in folder_format:
                 folder_format = re.sub('/', '\\', folder_format).strip()
         else:
             if '\\' in folder_format:
                 folder_format = folder_format.replace('\\', '/').strip()
+
+        if publisher is not None:
+            if publisher.endswith('.'):
+                publisher = publisher[:-1]
 
         u_comicnm = self.comic['ComicName']
         # let's remove the non-standard characters here that will break filenaming / searching.
@@ -109,9 +116,6 @@ class FileHandlers(object):
                 series = series[:-2]
             elif series.endswith('.'):
                 series = series[:-1]
-
-        publisher = re.sub('!', '', self.comic['ComicPublisher']) # thanks Boom!
-        publisher = helpers.filesafe(publisher)
 
         if booktype is not None:
             if self.comic['Corrected_Type'] is not None:
@@ -133,10 +137,15 @@ class FileHandlers(object):
         else:
             chunk_folder_format = folder_format
 
-        if any([self.comic['ComicVersion'] is None, booktype != 'Print']):
+        if self.comic['ComicVersion'] is None:
             comicVol = 'None'
         else:
-            comicVol = self.comic['ComicVersion']
+            if booktype != 'Print':
+                comicVol = self.comic['ComicVersion']
+            else:
+                comicVol = self.comic['ComicVersion']
+            if comicVol is None:
+                comicVol = 'None'
 
         #if comversion is None, remove it so it doesn't populate with 'None'
         if comicVol == 'None':
@@ -160,6 +169,9 @@ class FileHandlers(object):
             chunk_folder_format = chunk_folder_format[:ccf+1] + chunk_folder_format[ccf+2:]
 
         chunk_folder_format = re.sub(r'\s+', ' ', chunk_folder_format)
+
+        # if the path contains // in linux it will incorrectly parse things out.
+        #logger.fdebug('newPath: %s' % re.sub('//', '/', chunk_folder_format).strip())
 
         #do work to generate folder path
         values = {'$Series':        series,
@@ -311,6 +323,56 @@ class FileHandlers(object):
             return {'comlocation': comlocation,
                     'subpath':     bb_tuple,
                     'com_parentdir': com_parentdir}
+
+    def series_folder_collision_detection(self, comlocation, comicid, booktype, comicyear, volume):
+        myDB = db.DBConnection()
+        chk = myDB.select('SELECT * FROM comics WHERE ComicLocation LIKE "%'+comlocation+'%" AND ComicID !=?', [comicid])
+
+        tryit = None
+        if chk:
+            for ck in chk:
+                comloc = ck['ComicLocation']
+                if comloc == comlocation:
+                    logger.info('[SERIES_FOLDER_COLLISION_DETECTION] %s already exists for %s (%s).' % (ck['ComicLocation'], ck['ComicName'], ck['ComicYear']))
+                    tmp_ff = os.path.basename(mylar.CONFIG.FOLDER_FORMAT)
+                    if ck['ComicYear'] != comicyear:
+                        volumeyear = True
+                    else:
+                        volumeyear = False
+                    if '$Type' not in tmp_ff and booktype != ck['Type']:
+                        logger.fdebug('[SERIES_FOLDER_COLLISION_DETECTION] Trying to rename using BookType declaration.')
+                        new_format = '%s [%s]' % (tmp_ff, '$Type')
+                    elif '$Volume' not in tmp_ff:
+                        logger.fdebug('[SERIES_FOLDER_COLLISION_DETECTION] Trying to rename using Volume declaration.')
+                        volume_choice = '$VolumeY'
+                        #use volume instead of ck['ComicVersion'] since volume has already had changes applied in other module
+                        if volumeyear is False:
+                            if volume is None:
+                                volume_choice = '$VolumeY'
+                            else:
+                                volume_choice = '$VolumeN'
+                        t_name = tmp_ff.find('$Series')
+                        if t_name != -1:
+                            new_format = '%s %s %s' % (tmp_ff[:t_name+len('$Series'):], volume_choice, tmp_ff[t_name+len('$Series')+1:])
+
+                    self.comic = {'ComicPublisher': ck['ComicPublisher'],
+                                  'PublisherImprint': ck['PublisherImprint'],
+                                  'Corrected_Type': ck['Corrected_Type'],
+                                  'Type': booktype,
+                                  'ComicYear': comicyear,
+                                  'ComicName': ck['ComicName'],
+                                  'ComicLocation': ck['ComicLocation'],
+                                  'ComicVersion': volume}
+
+                    update_loc = {'temppath': mylar.CONFIG.DESTINATION_DIR,
+                                  'tempff': True,
+                                  'tempformat': new_format,
+                                  'comicid': ck['ComicID']}
+                    tryit = self.folder_create(update_loc=update_loc)
+                    break
+
+        logger.fdebug('tryit_response: %s' % (tryit,))
+        return tryit
 
     def rename_file(self, ofilename, issue=None, annualize=None, arc=False, file_format=None): #comicname, issue, comicyear=None, issueid=None)
             comicid = self.comicid   # it's coming in unicoded...
