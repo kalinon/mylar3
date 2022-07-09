@@ -1400,7 +1400,7 @@ class WebInterface(object):
             imageurl = image
 
         logger.info('imageurl: %s' % imageurl)
-        if imageurl.startswith('http'):
+        if imageurl and imageurl.startswith('http'):
             try:
                 r = requests.get(imageurl, params=None, stream=True, verify=mylar.CONFIG.CV_VERIFY, headers=mylar.CV_HEADERS)
             except Exception as e:
@@ -7148,9 +7148,10 @@ class WebInterface(object):
             return json.dumps({"status": False, "message": "Invalid API Key provided.", "version": str(version)})
 
         mylar.CONFIG.SAB_APIKEY = q_apikey
-        logger.info('APIKey provided is the FULL API Key which is the correct key. You still need to SAVE the config for the changes to be applied.')
+        logger.info('APIKey provided is the FULL API Key which is the correct key.')
         logger.info('Connection to SABnzbd tested sucessfully')
         mylar.CONFIG.SAB_VERSION = version
+        mylar.CONFIG.writeconfig(values={'sab_version': version, 'sab_apikey': q_apikey})
         return json.dumps({"status": True, "message": "Successfully verified API Key.", "version": str(version)})
 
     SABtest.exposed = True
@@ -8924,7 +8925,7 @@ class WebInterface(object):
         storyarcname = None
 
         myDB = db.DBConnection()
-        arcs = myDB.select('Select ComicID, ComicName, SeriesYear, StoryArc FROM storyarcs WHERE storyarcid=? GROUP BY ComicID', [storyarcid])
+        arcs = myDB.select('Select ComicID, ComicName, SeriesYear, StoryArc FROM storyarcs WHERE storyarcid=? AND (Manual IS NOT "deleted" OR Manual IS NULL) GROUP BY ComicID', [storyarcid])
 
         for ac in arcs:
             if storyarcname is None and ac['StoryArc'] is not None:
