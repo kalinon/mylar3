@@ -1388,7 +1388,17 @@ class FileChecker(object):
         n_name = 'annual'
         if mylar.CONFIG.ANNUALS_ON:
             ann_year_check = re.findall(r'(\d{4})(?=[\s]|annual\b|$)', self.watchcomic, flags=re.I)
-            if all(['annual' in nspace_watchcomic.lower(), 'annual' not in series_name.lower()]):
+            if all(
+                      [
+                          'annual' in nspace_watchcomic.lower(),
+                          'annual' not in series_name.lower()
+                      ]
+                ) or all(
+                      [
+                          'annual' not in nspace_watchcomic.lower(),
+                          'annual' in series_name.lower()
+                      ]
+                ):
                 annualisation = True
                 justthedigits = 'Annual'
                 if series_info['issue_number'] is not None:
@@ -1597,6 +1607,7 @@ class FileChecker(object):
                         continue
 
                 filename = fname
+                comicsize = 0
                 if os.path.splitext(filename)[1].lower().endswith(comic_ext):
                     if direc is None:
                         try:
@@ -1605,6 +1616,11 @@ class FileChecker(object):
                             logger.warn('error: %s' % e)
                     else:
                         comicsize = os.path.getsize(os.path.join(dir, direc, fname))
+
+                    if comicsize == 0:
+                        # 0-byte size file encountered - ignore it as it's a placeholder most likely
+                        continue
+
                     filelist.append({'directory':  direc,   #subdirectory if it exists
                                      'filename':   filename,
                                      'comicsize':  comicsize})

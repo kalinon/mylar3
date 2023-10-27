@@ -3962,7 +3962,8 @@ class WebInterface(object):
                             'jobname': jb['JobName'],
                             'status': status})
             jobresults = tmp
-        return serve_template(templatename="manage.html", title="Manage", mylarRoot=mylarRoot, jobs=jobresults, scan_info=scan_info)
+        queues = helpers.queue_info()
+        return serve_template(templatename="manage.html", title="Manage", mylarRoot=mylarRoot, jobs=jobresults, queues=queues, scan_info=scan_info)
     manage.exposed = True
 
     def jobmanage(self, job, mode):
@@ -6026,27 +6027,33 @@ class WebInterface(object):
                         comicstoIMP.append(result['ComicLocation']) #.decode(mylar.SYS_ENCODING, 'replace'))
                         getiss = result['IssueNumber']
                         #logger.fdebug('getiss: %s' % getiss)
-                        if 'annual' in getiss.lower():
-                            tmpiss = re.sub('[^0-9]','', getiss).strip()
-                            if any([tmpiss.startswith('19'), tmpiss.startswith('20')]) and len(tmpiss) == 4:
-                                logger.fdebug('[IMPORT] annual detected with no issue [%s]. Skipping this entry for determining series length.' % getiss)
-                                continue
+                        if getiss is None:
+                            logger.fdebug('[IMPORT] Unable to determine a valid issue number. The import process will currrently only work'
+                                          'with filenames that have an issue number in it. Ignoring this filename for import (you should'
+                                          'probably move it manually. [%s]' % result['ComicLocation'])
+                            continue
                         else:
-                            if (result['ComicYear'] not in yearRANGE) or all([yearRANGE is None, yearRANGE == 'None']):
-                                if result['ComicYear'] != "0000" and result['ComicYear'] is not None:
-                                    yearRANGE.append(str(result['ComicYear']))
-                                    yearTOP = str(result['ComicYear'])
-                            getiss_num = helpers.issuedigits(getiss)
-                            miniss_num = helpers.issuedigits(minISSUE)
-                            startiss_num = helpers.issuedigits(startISSUE)
-                            if int(getiss_num) > int(miniss_num):
-                                logger.fdebug('Minimum issue now set to : %s - it was %s' % (getiss, minISSUE))
-                                minISSUE = getiss
-                            if int(getiss_num) < int(startiss_num):
-                                logger.fdebug('Start issue now set to : %s - it was %s' % (getiss, startISSUE))
-                                startISSUE = str(getiss)
-                                if helpers.issuedigits(startISSUE) == 1000 and result['ComicYear'] is not None:  # if it's an issue #1, get the year and assume that's the start.
-                                    startyear = result['ComicYear']
+                            if 'annual' in getiss.lower():
+                                tmpiss = re.sub('[^0-9]','', getiss).strip()
+                                if any([tmpiss.startswith('19'), tmpiss.startswith('20')]) and len(tmpiss) == 4:
+                                    logger.fdebug('[IMPORT] annual detected with no issue [%s]. Skipping this entry for determining series length.' % getiss)
+                                    continue
+                            else:
+                                if (result['ComicYear'] not in yearRANGE) or all([yearRANGE is None, yearRANGE == 'None']):
+                                    if result['ComicYear'] != "0000" and result['ComicYear'] is not None:
+                                        yearRANGE.append(str(result['ComicYear']))
+                                        yearTOP = str(result['ComicYear'])
+                                getiss_num = helpers.issuedigits(getiss)
+                                miniss_num = helpers.issuedigits(minISSUE)
+                                startiss_num = helpers.issuedigits(startISSUE)
+                                if int(getiss_num) > int(miniss_num):
+                                    logger.fdebug('Minimum issue now set to : %s - it was %s' % (getiss, minISSUE))
+                                    minISSUE = getiss
+                                if int(getiss_num) < int(startiss_num):
+                                    logger.fdebug('Start issue now set to : %s - it was %s' % (getiss, startISSUE))
+                                    startISSUE = str(getiss)
+                                    if helpers.issuedigits(startISSUE) == 1000 and result['ComicYear'] is not None:  # if it's an issue #1, get the year and assume that's the start.
+                                        startyear = result['ComicYear']
 
                 #taking this outside of the transaction in an attempt to stop db locking.
                 if mylar.CONFIG.IMP_MOVE and movealreadyonlist == "yes":
@@ -6944,7 +6951,7 @@ class WebInterface(object):
                             logger.fdebug('making directory: %s' % os.path.split(com_location)[0])
                             os.mkdir(os.path.split(com_location)[0])
                         logger.info('Renaming directory: %s --> %s' % (orig_location,com_location))
-                        os.rename(orig_location, com_location)
+                        shutil.move(orig_location, com_location)
                     except Exception as e:
                         if 'No such file or directory' in e:
                             checkdirectory = filechecker.validateAndCreateDirectory(com_location, True)
@@ -7360,6 +7367,27 @@ class WebInterface(object):
 
     api.exposed = True
 
+    def prometheus_metrics(self):
+        logger.debug("Responding to Prometheus metrics request")
+        cherrypy.response.headers['Content-Type'] = "text/plain"
+        q_metrics = {name: {} for name in ["alive", "size", "started"]}
+        for q in helpers.queue_info():
+            normalised_name = q.name.replace("-", "_")
+
+            q_metrics["size"][normalised_name] = q.size
+            q_metrics["started"][normalised_name] = "1" if q.is_alive is not None else "0"
+            q_metrics["alive"][normalised_name] = "1" if q.is_alive else "0"
+
+        response = ""
+        for metric, items in q_metrics.items():
+            full_metric = f"mylar_queue_{metric}"
+            response += f"# TYPE {full_metric} gauge\n"
+            for name, value in items.items():
+                response += '%s{queue="%s"} %s\n' % (full_metric, name, value)
+            response += "\n"
+        return response
+
+    prometheus_metrics.exposed = True
 
     def opds(self, *args, **kwargs):
         from mylar.opds import OPDS

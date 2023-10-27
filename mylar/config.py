@@ -353,19 +353,20 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'ENABLE_TORRENTS': (bool, 'Torrents', False),
     'ENABLE_TORRENT_SEARCH': (bool, 'Torrents', False),
     'MINSEEDS': (int, 'Torrents', 0),
-    'ALLOW_PACKS': (bool, 'Torrents', False),
     'ENABLE_PUBLIC': (bool, 'Torrents', False),
     'PUBLIC_VERIFY': (bool, 'Torrents', True),
 
     'ENABLE_DDL': (bool, 'DDL', False),
     'ENABLE_GETCOMICS': (bool, 'DDL', False),
-    'ALLOW_PACKS': (bool, 'DDL', False),
     'PACK_PRIORITY': (bool, 'DDL', False),
     'DDL_QUERY_DELAY': (int, 'DDL', 15),
     'DDL_LOCATION': (str, 'DDL', None),
     'DDL_AUTORESUME': (bool, 'DDL', True),
     'ENABLE_FLARESOLVERR': (bool, 'DDL', False),
     'FLARESOLVERR_URL': (str, 'DDL', None),
+    'ENABLE_PROXY': (bool, 'DDL', False),
+    'HTTP_PROXY': (str, 'DDL', None),
+    'HTTPS_PROXY': (str, 'DDL', None),
 
     'AUTO_SNATCH': (bool, 'AutoSnatch', False),
     'AUTO_SNATCH_SCRIPT': (str, 'AutoSnatch', None),
@@ -858,7 +859,7 @@ class Config(object):
                             if config.has_section(section):
                                 config.remove_option(section, ini_key)
                             if len(dict(config.items(section))) == 0:
-                                config.remove_section(section) 
+                                config.remove_section(section)
                         except configparser.NoSectionError:
                             continue
 
@@ -1116,7 +1117,7 @@ class Config(object):
                 logger.fdebug('[Cache Cleanup] Cache Cleanup finished. Nothing to clean!')
 
         d_path = '/proc/self/cgroup'
-        if os.path.exists('/.dockerenv') or os.path.isfile(d_path) and any('docker' in line for line in open(d_path)):
+        if os.path.exists('/.dockerenv') or 'KUBERNETES_SERVICE_HOST' in os.environ or os.path.isfile(d_path) and any('docker' in line for line in open(d_path)):
             logger.info('[DOCKER-AWARE] Docker installation detected.')
             mylar.INSTALL_TYPE = 'docker'
             if any([self.DESTINATION_DIR is None, self.DESTINATION_DIR == '']):
@@ -1138,6 +1139,12 @@ class Config(object):
         if any([self.COMICVINE_API is None, self.COMICVINE_API == 'None', self.COMICVINE_API == '']):
             logger.error('No User Comicvine API key specified. I will not work very well due to api limits - http://api.comicvine.com/ and get your own free key.')
             self.COMICVINE_API = None
+        # Check if Comicvine API key starts with None, thus making it invalid
+        elif self.COMICVINE_API[:4] == 'None':
+            # Notify user of what's going on
+            logger.warn('Comicvine API key starts with a None, working around for now, please fix')
+            # Set the actual API key, so mylar does not appear broken from the start
+            self.COMICVINE_API = self.COMICVINE_API[4:]
 
         if self.SEARCH_INTERVAL < 360:
             logger.fdebug('Search interval too low. Resetting to 6 hour minimum')
@@ -1669,7 +1676,7 @@ class Config(object):
                                            "provider":   found['provider'],
                                            "orig_seq":   int(seqnum)})
                 i-=1
- 
+
             #now we reorder based on priority of orig_seq, but use a new_order seq
             xa = 0
             NPROV = []

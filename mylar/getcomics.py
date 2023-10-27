@@ -129,12 +129,17 @@ class GC(object):
         }
 
         self.headers = {
-            'Accept-encoding': 'gzip',
             'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:40.0) Gecko/20100101 Firefox/40.1',
             'Referer': mylar.GC_URL,
         }
 
         self.session = requests.Session()
+
+        if mylar.CONFIG.ENABLE_PROXY:
+            self.session.proxies.update({
+                'http':  mylar.CONFIG.HTTP_PROXY,
+                'https': mylar.CONFIG.HTTPS_PROXY 
+            })
 
         self.session_path = session_path if session_path is not None else os.path.join(mylar.CONFIG.SECURE_DIR, ".gc_cookies.dat")
 
@@ -148,15 +153,7 @@ class GC(object):
 
         self.oneoff = oneoff
 
-        self.local_filename = os.path.join(mylar.CONFIG.CACHE_DIR, "getcomics.html")
-
         self.search_format = ['"%s #%s (%s)"', '%s #%s (%s)', '%s #%s', '%s %s']
-
-        self.headers = {
-            'Accept-encoding': 'gzip',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:40.0) Gecko/20100101 Firefox/40.1',
-            'Referer': mylar.GC_URL,
-        }
 
         self.provider_stat = provider_stat
 
@@ -164,11 +161,8 @@ class GC(object):
 
         self.cookie_receipt()
 
-        results = {}
         try:
             reversed_order = True
-            total_pages = 1
-            pagenumber = 1
             if is_info is not None:
                 if is_info['chktpb'] == 0:
                     logger.debug('removing query from loop that accounts for no issue number')
@@ -182,7 +176,6 @@ class GC(object):
                 self.search_format.insert(0, '%s %s' % (self.query['comicname'], self.query['year']))
 
             for sf in self.search_format:
-                resultset = []
                 verified_matches = []
                 sf_issue = self.query['issue']
                 if is_info['chktpb'] == 1 and self.query['comicname'] == sf:
@@ -223,64 +216,20 @@ class GC(object):
                             else:
                                 queryline = sf % (self.query['comicname'])
 
+                if not queryline:
+                    continue
+
                 logger.fdebug('[DDL-QUERY] Query set to: %s' % queryline)
-                pause_the_search = mylar.CONFIG.DDL_QUERY_DELAY #mylar.search.check_the_search_delay()
-                diff = mylar.search.check_time(self.provider_stat['lastrun']) # only limit the search queries - the other calls should be direct and not as intensive
-                if diff < pause_the_search:
-                    logger.warn('[PROVIDER-SEARCH-DELAY][DDL] Waiting %s seconds before we search again...' % (pause_the_search - int(diff)))
-                    time.sleep(pause_the_search - int(diff))
-                else:
-                    logger.fdebug('[PROVIDER-SEARCH-DELAY][DDL] Last search took place %s seconds ago. We\'re clear...' % (int(diff)))
 
-                if queryline:
-                    gc_url = self.url
-                    if pagenumber != 1 and pagenumber != total_pages:
-                        gc_url = '%s/page/%s' % (self.url, pagenumber)
-                        logger.fdebug('parsing for page %s' % pagenumber)
-                    #logger.fdebug('session cookies: %s' % (self.session.cookies,))
-                    t = self.session.get(
-                        gc_url + '/',
-                        params={'s': queryline},
-                        verify=True,
-                        headers=self.headers,
-                        stream=True,
-                        timeout=(30,10)
-                    )
-
-                    write_time = time.time()
-                    mylar.search.last_run_check(write={'DDL(GetComics)': {'id': 200, 'active': True, 'lastrun': write_time, 'type': 'DDL', 'hits': self.provider_stat['hits']+1}})
-                    self.provider_stat['lastrun'] = write_time
-
-                    with open(self.local_filename, 'wb') as f:
-                        for chunk in t.iter_content(chunk_size=1024):
-                           if chunk:  # filter out keep-alive new chunks
-                                f.write(chunk)
-                                f.flush()
-
-                for x in self.search_results(pagenumber,total_pages)['entries']:
-                    if total_pages != 1:
-                        total_pages = x['total_pages']
-                    if pagenumber != 1:
-                        pagenumber = x['page']
-                    bb = next((item for item in resultset if item['link'] == x['link']), None)
-                    try:
-                        if 'Weekly' not in self.query['comicname'] and 'Weekly' in x['title']:
-                            continue
-                        elif bb is None:
-                            resultset.append(x)
-                    except Exception as e:
-                        resultset.append(x)
-                    else:
-                        continue
-
-                logger.info('resultset: %s' % (resultset,))
-                if len(resultset) >= 1:
-                    results['entries'] = resultset
-                    sfs = search_filer.search_check()
-                    verified_matches = sfs.checker(results, is_info)
-                    if verified_matches:
-                        logger.fdebug('verified_matches: %s' % (verified_matches,))
-                        break
+                result_generator = self.perform_search_queries(queryline)
+                sfs = search_filer.search_check()
+                match = sfs.check_for_first_result(
+                    result_generator, is_info, prefer_pack=mylar.CONFIG.PACK_PRIORITY
+                )
+                if match is not None:
+                    verified_matches = [match]
+                    logger.fdebug('verified_matches: %s' % (verified_matches,))
+                    break
                 logger.fdebug('sleep...%s%s' % (mylar.CONFIG.DDL_QUERY_DELAY, 's'))
                 time.sleep(mylar.CONFIG.DDL_QUERY_DELAY)
 
@@ -362,6 +311,7 @@ class GC(object):
         t = self.session.get(
             link,
             verify=True,
+            headers=self.headers,
             stream=True,
             timeout=(30,10)
         )
@@ -372,29 +322,58 @@ class GC(object):
                     f.write(chunk)
                     f.flush()
 
-    def search_results(self, pagenumber=1, total_pages=1):
-        results = {}
+    def perform_search_queries(self, queryline):
+        next_url = self.url
+        seen_urls = set()
+        while next_url is not None:
+            pause_the_search = mylar.CONFIG.DDL_QUERY_DELAY
+            diff = mylar.search.check_time(self.provider_stat['lastrun']) # only limit the search queries - the other calls should be direct and not as intensive
+            if diff < pause_the_search:
+                logger.warn('[PROVIDER-SEARCH-DELAY][DDL] Waiting %s seconds before we fetch a search page again...' % (pause_the_search - int(diff)))
+                time.sleep(pause_the_search - int(diff))
+            else:
+                logger.fdebug('[PROVIDER-SEARCH-DELAY][DDL] Last search page fetch took place %s seconds ago. We\'re clear...' % (int(diff)))
+
+            page_html = self.session.get(
+                next_url + '/',
+                params={'s': queryline},
+                verify=True,
+                headers=self.headers,
+                timeout=(30,10)
+            ).text
+
+            write_time = time.time()
+            mylar.search.last_run_check(write={'DDL(GetComics)': {'id': 200, 'active': True, 'lastrun': write_time, 'type': 'DDL', 'hits': self.provider_stat['hits']+1}})
+            self.provider_stat['lastrun'] = write_time
+            page_results, next_url = self.parse_search_result(page_html)
+
+            for result in page_results:
+                if 'Weekly' not in self.query.get('comicname', "") and 'Weekly' in result.get('title', ""):
+                    continue
+                if result["link"] in seen_urls:
+                    continue
+                seen_urls.add(result["link"])
+                yield result
+
+    def parse_search_result(self, page_html):
         resultlist = []
-        soup = BeautifulSoup(open(self.local_filename, encoding='utf-8'), 'html.parser')
+        soup = BeautifulSoup(page_html, 'html.parser')
 
-        resultline = soup.find("span", {"class": "cover-article-count"}).get_text(
-            strip=True
-        )
-        logger.info('There are %s results' % re.sub('Articles', '', resultline).strip())
-        if pagenumber == 1 and int(re.sub('Articles', '', resultline).strip()) == 12:
-            # get paging (soon)
-            pagelines = soup.findAll("a", {"class": "page-numbers"})
-            logger.fdebug('pagelines: %s' % (pagelines,))
-            if len(pagelines) > 1:
-                page_line = pagelines[len(pagelines)-1]['href']
-                logger.fdebug('page_line: %s' % page_line)
-                pages_ref = urllib.parse.urlsplit(page_line)
-                logger.fdebug('page_url: %s' % (pages_ref,))
-                page_cnt = list(filter(None, pages_ref.path.rsplit('/')))
-                pages = page_cnt[len(page_cnt)-1]
-                logger.fdebug('number of pages: %s' % pages)
+        articles = soup.findAll("article")
+        page_list = soup.find("ul", {"class": "page-numbers"})
+        # A single-page result has "NO MORE ARTICLES" instead of numbers
+        page_no = total_pages = "1"
+        if page_list is not None:
+            page_numbers = page_list.find_all("li")
+            if len(page_numbers):
+                total_pages = page_numbers[-1].text
+            current_page_span = page_list.find("span", class_="current")
+            if current_page_span is not None:
+                page_no = current_page_span.text
 
-        for f in soup.findAll("article"):
+        logger.info('There are %d results on page %s (of %s)', len(articles), page_no, total_pages)
+
+        for f in articles:
             id = f['id']
             lk = f.find('a')
             link = lk['href']
@@ -477,48 +456,55 @@ class GC(object):
                 ):
                     continue
 
-            option_find = f.find("p", {"style": "text-align: center;"})
+            needle_style = "text-align: center;"
+            option_find = f.find("p", {"style": needle_style})
             i = 0
             if option_find is None:
-                continue
-            else:
-                while i <= 2 and option_find is not None:
-                    option_find = option_find.findNext(text=True)
-                    if 'Year' in option_find:
-                        year = option_find.findNext(text=True)
-                        year = re.sub(r'\|', '', year).strip()
-                        if pack is True:
-                            title = re.sub(r'\(' + year + r'\)', '', title).strip()
-                    else:
-                        size = option_find.findNext(text=True)
+                # Some search results have the "option_find" HTML as escaped
+                # text instead of actual HTML: try to salvage a option_find in
+                # that case
+                excerpt = f.find("p", class_="post-excerpt")
+                if excerpt is not None and needle_style in excerpt.text:
+                    option_find = BeautifulSoup(excerpt.text, "html.parser").find("p", {"style": needle_style})
+                else:
+                    continue
+            while i <= 2 and option_find is not None:
+                option_find = option_find.findNext(text=True)
+                if 'Year' in option_find:
+                    year = option_find.findNext(text=True)
+                    year = re.sub(r'\|', '', year).strip()
+                    if pack is True:
+                        title = re.sub(r'\(' + year + r'\)', '', title).strip()
+                else:
+                    size = option_find.findNext(text=True)
+                    if all(
+                        [
+                            re.sub(':', '', size).strip() != 'Size',
+                            len(re.sub(r'[^0-9]', '', size).strip()) > 0,
+                        ]
+                    ):
                         if all(
-                            [
-                                re.sub(':', '', size).strip() != 'Size',
-                                len(re.sub(r'[^0-9]', '', size).strip()) > 0,
-                            ]
+                                  [
+                                      '-' in size,
+                                      re.sub(r'[^0-9]', '', size).strip() == '',
+                                  ]
                         ):
-                            if all(
-                                      [
-                                          '-' in size,
-                                          re.sub(r'[^0-9]', '', size).strip() == '',
-                                      ]
-                            ):
-                                size = None
-                            if 'MB' in size:
-                                size = re.sub('MB', 'M', size).strip()
-                            if 'GB' in size:
-                                size = re.sub('GB', 'G', size).strip()
-                            if '//' in size:
-                                nwsize = size.find('//')
-                                size = re.sub(r'\[', '', size[:nwsize]).strip()
-                            elif '/' in size:
-                                nwsize = size.find('/')
-                                size = re.sub(r'\[', '', size[:nwsize]).strip()
-                            if '-' in size:
-                                size = None
-                        else:
-                            size = '0M'
-                    i += 1
+                            size = None
+                        if 'MB' in size:
+                            size = re.sub('MB', 'M', size).strip()
+                        if 'GB' in size:
+                            size = re.sub('GB', 'G', size).strip()
+                        if '//' in size:
+                            nwsize = size.find('//')
+                            size = re.sub(r'\[', '', size[:nwsize]).strip()
+                        elif '/' in size:
+                            nwsize = size.find('/')
+                            size = re.sub(r'\[', '', size[:nwsize]).strip()
+                        if '-' in size:
+                            size = None
+                    else:
+                        size = '0M'
+                i += 1
             dateline = f.find('time')
             datefull = dateline['datetime']
             datestamp = time.mktime(time.strptime(datefull, "%Y-%m-%d"))
@@ -536,15 +522,17 @@ class GC(object):
                     "year": year,
                     "id": re.sub('post-', '', id).strip(),
                     "site": 'DDL(GetComics)',
-                    "page": pagenumber,
-                    "total_pages": total_pages,
                 }
             )
 
             logger.fdebug('%s [%s]' % (title, size))
 
-        results['entries'] = resultlist
-        return results
+        older_posts_a = soup.find("a", class_="pagination-older")
+        next_page = None
+        if older_posts_a is not None:
+            next_page = older_posts_a.get("href")
+
+        return resultlist, next_page
 
     def parse_downloadresults(self, id, mainlink, comicinfo=None):
         try:
@@ -779,6 +767,7 @@ class GC(object):
         myDB = db.DBConnection()
         filename = None
         self.cookie_receipt()
+        self.headers['Accept-encoding'] = 'gzip'
         try:
             with requests.Session() as s:
                 if resume is not None:
@@ -793,7 +782,7 @@ class GC(object):
                     verify=True,
                     headers=self.headers,
                     stream=True,
-                    timeout=(30,10)
+                    timeout=(30,30)
                 )
 
                 filename = os.path.basename(
@@ -920,7 +909,7 @@ class GC(object):
                                 f.flush()
 
         except requests.exceptions.Timeout as e:
-            logger.error('[ERROR] download has timed out due to inactivity...' % e)
+            logger.error('[ERROR] download has timed out due to inactivity...: %s', e)
             mylar.DDL_LOCK = False
             return {"success": False, "filename": filename, "path": None}
 
@@ -961,6 +950,9 @@ class GC(object):
                 else:
                     new_path = dst_path
                 return {"success": True, "filename": filename, "path": new_path}
+
+        mylar.DDL_LOCK = False
+        return {"success": False, "filename": filename, "path": None}
 
     def issue_list(self, pack):
         # packlist = [x.strip() for x in pack.split(',)]
