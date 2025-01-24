@@ -3092,7 +3092,10 @@ def torrentinfo(issueid=None, torrent_hash=None, download=False, monitor=False):
 def weekly_info(week=None, year=None, current=None):
     #find the current week and save it as a reference point.
     todaydate = datetime.datetime.today()
-    current_weeknumber = todaydate.strftime("%U")
+    if todaydate.year == 2025:
+        current_weeknumber = todaydate.isocalendar()[1]
+    else:
+        current_weeknumber = todaydate.strftime("%U")
     if current is not None:
         c_weeknumber = int(current[:current.find('-')])
         c_weekyear = int(current[current.find('-')+1:])
@@ -3135,18 +3138,28 @@ def weekly_info(week=None, year=None, current=None):
             weeknumber = 52
             year = 2021
 
+        #monkey patch for 2024/2025 - week 52/week 0
+        if all([weeknumber == 52, c_weeknumber == 51, c_weekyear == 2024]):
+            weeknumber = 1
+            year = 2025
+        elif all([weeknumber == 0, c_weeknumber == 1, c_weekyear == 2025]):
+            weeknumber = 51
+            year = 2024
 
         #view specific week (prev_week, next_week)
         startofyear = date(year,1,1)
         week0 = startofyear - timedelta(days=startofyear.isoweekday())
         stweek = datetime.datetime.strptime(week0.strftime('%Y-%m-%d'), '%Y-%m-%d')
-        startweek = stweek + timedelta(weeks = weeknumber)
+        if year == 2025:
+            startweek = stweek + timedelta(weeks = weeknumber -1)
+        else:
+            startweek = stweek + timedelta(weeks = weeknumber)
         midweek = startweek + timedelta(days = 3)
         endweek = startweek + timedelta(days = 6)
     else:
         #find the given week number for the current day
         weeknumber = current_weeknumber
-        year = todaydate.strftime("%Y")
+        year = int(todaydate.strftime("%Y"))
 
         #monkey patch for 2018/2019 - week 52/week 0
         if all([weeknumber == 52, c_weeknumber == 51, c_weekyear == 2018]):
@@ -3174,8 +3187,20 @@ def weekly_info(week=None, year=None, current=None):
             weeknumber = 52
             year = 2021
 
+        #monkey patch for 2024/2025 - week 52/week 0
+        if all([weeknumber == 52, c_weeknumber == 51, c_weekyear == 2024]) or all([weeknumber == '52', year == '2024']):
+            weeknumber = 1
+            year = 2025
+        elif all([weeknumber == 52, c_weeknumber == 1, c_weekyear == 2025]):
+            weeknumber = 51
+            year = 2024
+
         stweek = datetime.datetime.strptime(todaydate.strftime('%Y-%m-%d'), '%Y-%m-%d')
-        startweek = stweek - timedelta(days = (stweek.weekday() + 1) % 7)
+        if year == 2025:
+            startweek = stweek
+        else:
+            startweek = stweek - timedelta(days = (stweek.weekday() + 1) % 7)
+
         midweek = startweek + timedelta(days = 3)
         endweek = startweek + timedelta(days = 6)
 
@@ -3187,6 +3212,10 @@ def weekly_info(week=None, year=None, current=None):
         # make sure the arrow going back will hit the correct week in the previous year.
         prev_week = 52
         prev_year = 2021
+    elif all([weeknumber == 0, year == 2025]):
+        # make sure the arrow going back will hit the correct week in the previous year.
+        prev_week = 51
+        prev_year = 2024
     else:
         prev_week = int(weeknumber) - 1
         prev_year = year
@@ -3202,6 +3231,9 @@ def weekly_info(week=None, year=None, current=None):
             # make sure the next arrow will hit the correct week in the following year.
             next_week = '1'
         elif all([weeknumber == 52, year == 2021]):
+            # make sure the next arrow will hit the correct week in the following year.
+            next_week = '1'
+        elif all([weeknumber == 51, year == 2024]):
             # make sure the next arrow will hit the correct week in the following year.
             next_week = '1'
         else:
