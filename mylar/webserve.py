@@ -3158,16 +3158,13 @@ class WebInterface(object):
 
     def fly_me_to_the_moon(self):
         todaydate = datetime.datetime.today()
-        current_weeknumber = todaydate.strftime("%U")
+        weekinfo = helpers.weekly_info()
 
-        #find the given week number for the current day
-        weeknumber = current_weeknumber
-        stweek = datetime.datetime.strptime(todaydate.strftime('%Y-%m-%d'), '%Y-%m-%d')
-        startweek = stweek - timedelta(days = (stweek.weekday() + 1) % 7)
-        midweek = startweek + timedelta(days = 3)
-        endweek = startweek + timedelta(days = 6)
-        weekyear = todaydate.strftime("%Y")
-
+        weeknumber = weekinfo['current_weeknumber']
+        weekyear = weekinfo['year']
+        startweek = weekinfo['startweek']
+        midweek = weekinfo['midweek']
+        endweek = weekinfo['endweek']
 
         myDB = db.DBConnection()
         logger.info('weeknumber: %s' % weeknumber)
@@ -4097,7 +4094,7 @@ class WebInterface(object):
                     if os.path.exists(os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comicdir))):
                         secondary_folders = os.path.join(mylar.CONFIG.MULTIPLE_DEST_DIRS, os.path.basename(comicdir))
                     else:
-                        ff = mylar.filers.FileHandlers(ComicID=ComicID)
+                        ff = mylar.filers.FileHandlers(ComicID=cid)
                         secondary_folders = ff.secondary_folders(comicdir)
             except:
                 pass
@@ -4500,11 +4497,28 @@ class WebInterface(object):
         raise cherrypy.HTTPRedirect("home")
     forceUpdate.exposed = True
 
-    def forceSearch(self):
+    def forceSearch(self, issueIds = None):
         #from mylar import search
         #threading.Thread(target=search.searchforissue).start()
         #raise cherrypy.HTTPRedirect("home")
-        self.schedulerForceCheck(jobid='search')
+        if issueIds is None:
+            self.schedulerForceCheck(jobid='search')
+        else:
+            myDB = db.DBConnection()
+
+            for issueId in issueIds:
+                issue_data = myDB.selectone("SELECT C.Type, C.ComicYear, I.ComicName, I.Issue_Number, I.ComicID, I.IssueID FROM comics as C INNER JOIN issues as I on C.ComicID = I.ComicID WHERE I.IssueID=?", [issueId]).fetchone()
+                passInfo = {'issueid': issueId,
+                            'comicname': issue_data['ComicName'],
+                            'seriesyear': issue_data['ComicYear'],
+                            'comicid': issue_data['ComicID'],
+                            'issuenumber': issue_data['Issue_Number'],
+                            'booktype': issue_data['Type'],
+                            'manual': False}
+                logger.fdebug(f"Adding issue {issue_data['ComicName']} #{issue_data['Issue_Number']} [{issueId}] to search queue")
+                s = mylar.SEARCH_QUEUE.put(passInfo)
+
+        return json.dumps({'status': 'success'})
     forceSearch.exposed = True
 
     def forceRescan(self, ComicID, bulk=False, action='recheck', api=False):
@@ -4527,7 +4541,7 @@ class WebInterface(object):
                     self.group_metatag(ComicID=cid['ComicID'], threaded=True)
                     cnt+=1
                 logger.info('[MASS BATCH][METATAGGING-FILES] I have completed metatagging files for ' + str(len(ComicID)) + ' series.')
-                mylar.GLOBAL_MESSAGES = {'status': 'success', 'comicid': None, 'tables': 'both', 'message': 'Finished complete series (re)tagging of %s of %s (%s)' % (issueline, comicinfo['ComicName'], comicinfo['ComicYear'])}
+                mylar.GLOBAL_MESSAGES = {'status': 'success', 'comicid': None, 'tables': 'both', 'message': 'Finished complete series (re)tagging of %s of %s (%s)' % (str(len(ComicID)), comicinfo['ComicName'], comicinfo['ComicYear'])}
         else:
             myDB = db.DBConnection()
             cline = myDB.selectone("SELECT ComicName, ComicYear FROM comics WHERE ComicID=?", [ComicID]).fetchone()
@@ -6743,6 +6757,7 @@ class WebInterface(object):
                     "nzb_downloader_sabnzbd": helpers.radio(mylar.CONFIG.NZB_DOWNLOADER, 0),
                     "nzb_downloader_nzbget": helpers.radio(mylar.CONFIG.NZB_DOWNLOADER, 1),
                     "nzb_downloader_blackhole": helpers.radio(mylar.CONFIG.NZB_DOWNLOADER, 2),
+                    "nzb_downloader_none": helpers.radio(mylar.CONFIG.NZB_DOWNLOADER, 3),
                     "sab_host": mylar.CONFIG.SAB_HOST,
                     "sab_user": mylar.CONFIG.SAB_USERNAME,
                     "sab_api": mylar.CONFIG.SAB_APIKEY,
@@ -6756,6 +6771,7 @@ class WebInterface(object):
                     "sab_remove_completed": helpers.checked(mylar.CONFIG.SAB_REMOVE_COMPLETED),
                     "sab_remove_failed": helpers.checked(mylar.CONFIG.SAB_REMOVE_FAILED),
                     "nzbget_host": mylar.CONFIG.NZBGET_HOST,
+                    "nzbget_sub": mylar.CONFIG.NZBGET_SUB,
                     "nzbget_port": mylar.CONFIG.NZBGET_PORT,
                     "nzbget_user": mylar.CONFIG.NZBGET_USERNAME,
                     "nzbget_pass": mylar.CONFIG.NZBGET_PASSWORD,
@@ -7478,15 +7494,17 @@ class WebInterface(object):
 
     SABtest.exposed = True
 
-    def NZBGet_test(self, nzbhost=None, nzbport=None, nzbusername=None, nzbpassword=None):
-        if nzbhost is None:
+    def NZBGet_test(self, nzbhost=None, nzbport=None, nzbusername=None, nzbpassword=None, nzbsub=None):
+        if any([nzbhost is None, nzbhost == 'None']):
             nzbhost = mylar.CONFIG.NZBGET_HOST
-        if nzbport is None:
+        if any([nzbport is None, nzbport == 'None']):
             nzbport = mylar.CONFIG.NZBGET_PORT
-        if nzbusername is None:
+        if any([nzbusername is None, nzbusername == 'None']):
             nzbusername = mylar.CONFIG.NZBGET_USERNAME
-        if nzbpassword is None:
+        if any([nzbpassword is None, nzbpassword == 'None']):
             nzbpassword = mylar.CONFIG.NZBGET_PASSWORD
+        if any([nzbsub is None, nzbsub == 'None']):
+            nzbsub = mylar.CONFIG.NZBGET_SUB
 
         logger.fdebug('Now attempting to test NZBGet connection')
 
@@ -7499,7 +7517,15 @@ class WebInterface(object):
             nzbgethost = nzbhost[7:]
 
         url = '%s://%s:%s'
-        nzbparams = (protocol,nzbgethost,nzbport,)
+        nzbparams = (protocol,nzbgethost,nzbport)
+        if nzbsub:
+            if not nzbsub.startswith('/'):
+                nzbsub = '/' + nzbsub
+            if nzbsub.endswith('/'):
+                nzbsub = nzbsub[:-1]
+            url = '%s://%s:%s%s'
+            nzbparams = nzbparams + (nzbsub,)
+
         logon_info = ''
         if all([nzbusername is not None, nzbpassword is not None]):
             logon_info = '%s:%s'
@@ -7511,7 +7537,6 @@ class WebInterface(object):
             url = url + '/' + logon_info
         url = url + '/xmlrpc'
         nzb_url = (url % nzbparams)
-        logger.info('nzb_url: %s' % (nzb_url,))
 
         import xmlrpc.client, http.client, socket
         nzbserver = xmlrpc.client.ServerProxy(nzb_url)
@@ -8044,6 +8069,57 @@ class WebInterface(object):
 
     manual_metatag.exposed = True
 
+    def bulk_metatag(self, ComicID, IssueIDs, threaded=False):
+        myDB = db.DBConnection()
+        cinfo = myDB.selectone('SELECT ComicLocation, ComicVersion, ComicYear, ComicName, AgeRating FROM comics WHERE ComicID=?', [ComicID]).fetchone()
+
+        comicinfo = {'ComicID': ComicID,
+                     'ComicName': cinfo['ComicName'],
+                     'ComicYear': cinfo['ComicYear'],
+                     'ComicVersion': cinfo['ComicVersion'],
+                     'AgeRating': cinfo['AgeRating'],
+                     'meta_dir': cinfo['ComicLocation']}
+        
+        issueList = ', '.join(IssueIDs)
+        groupinfo = myDB.select(f'SELECT IssueID, Location FROM issues WHERE ComicID={ComicID} and IssueID IN ({issueList}) and Location is not NULL')
+        if mylar.CONFIG.ANNUALS_ON:
+            groupinfo += myDB.select(f'SELECT IssueID, Location FROM annuals WHERE ComicID={ComicID} and IssueID IN ({issueList}) and Location is not NULL')
+
+        if len(groupinfo) == 0:
+            logger.warn('No issues physically exist for me to (re)-tag.')
+            return
+        
+        if mylar.CONFIG.CV_BATCH_LIMIT_PROTECTION and len(groupinfo) > mylar.CONFIG.CV_BATCH_LIMIT_THRESHOLD:
+            warningMessage = f"CV Batch Limit Protection ({mylar.CONFIG.CV_BATCH_LIMIT_THRESHOLD}) has been triggered trying to tag {len(groupinfo)} issues.  This will likely breach ComicVine API Limits."
+            logger.warn(f"[SERIES-METATAGGER][{comicinfo['ComicName']} ({comicinfo['ComicYear']})] {warningMessage}")
+            mylar.GLOBAL_MESSAGES = {'status': 'failure', 'comicname': cinfo['ComicName'], 'seriesyear': cinfo['ComicYear'], 'comicid': ComicID, 'tables': 'both', 'message': warningMessage}
+            return
+        
+        issueinfo = []
+        for ginfo in groupinfo:
+            issueinfo.append({'IssueID': ginfo['IssueID'],
+                              'Location': ginfo['Location']})        
+
+        if threaded is False:
+            threading.Thread(target=self.thread_that_bulk_meta, args=[comicinfo, issueinfo]).start()
+            return json.dumps({'status': 'success'})
+        else:
+            self.thread_that_bulk_meta(comicinfo, issueinfo)
+            return json.dumps({'status': 'success'})        
+    bulk_metatag.exposed = True
+
+    def thread_that_bulk_meta(self, comicinfo, issueinfo):
+        for ginfo in issueinfo:
+            #if multiple_dest_dirs is in effect, metadir will be pointing to the wrong location and cause a 'Unable to create temporary cache location' error message
+            self.manual_metatag(ginfo['IssueID'], group=True)
+        updater.forceRescan(comicinfo['ComicID'])
+        logger.info('[SERIES-METATAGGER][%s (%s)] Finished (re)tagging of metadata for selected issues.' % (comicinfo['ComicName'], comicinfo['ComicYear']))
+        issueline = '%s issues' % len(issueinfo)
+        if len(issueinfo) == 1:
+            issueline = '1 issue'
+        mylar.GLOBAL_MESSAGES = {'status': 'success', 'comicname': comicinfo['ComicName'], 'seriesyear': comicinfo['ComicYear'], 'comicid': comicinfo['ComicID'], 'tables': 'both', 'message': 'Finished (re)tagging of %s of %s (%s)' % (issueline, comicinfo['ComicName'], comicinfo['ComicYear'])}
+    thread_that_bulk_meta.exposed = True
+
     def group_metatag(self, ComicID, threaded=False):
         myDB = db.DBConnection()
         cinfo = myDB.selectone('SELECT ComicLocation, ComicVersion, ComicYear, ComicName, AgeRating FROM comics WHERE ComicID=?', [ComicID]).fetchone()
@@ -8059,8 +8135,14 @@ class WebInterface(object):
         if mylar.CONFIG.ANNUALS_ON:
             groupinfo += myDB.select('SELECT IssueID, Location FROM annuals WHERE ComicID=? and Location is not NULL', [ComicID])
 
-        if groupinfo is None:
+        if len(groupinfo) == 0:
             logger.warn('No issues physically exist within the series directory for me to (re)-tag.')
+            return
+
+        if mylar.CONFIG.CV_BATCH_LIMIT_PROTECTION and len(groupinfo) > mylar.CONFIG.CV_BATCH_LIMIT_THRESHOLD:
+            warningMessage = f"CV Batch Limit Protection ({mylar.CONFIG.CV_BATCH_LIMIT_THRESHOLD}) has been triggered trying to tag {len(groupinfo)} issues.  This will likely breach ComicVine API Limits."
+            logger.warn(f"[SERIES-METATAGGER][{comicinfo['ComicName']} ({comicinfo['ComicYear']})] {warningMessage}")
+            mylar.GLOBAL_MESSAGES = {'status': 'failure', 'comicname': cinfo['ComicName'], 'seriesyear': cinfo['ComicYear'], 'comicid': ComicID, 'tables': 'both', 'message': warningMessage}
             return
 
         issueinfo = []
