@@ -50,6 +50,8 @@ from operator import itemgetter
 
 import xml.etree.ElementTree as ET
 
+from string import ascii_lowercase
+
 import mylar
 from mylar import (
     carepackage,
@@ -227,7 +229,7 @@ class WebInterface(object):
 
             if os.path.exists(test_path):
                 try:
-                    shutil.remove(test_path)
+                    shutil.rmtree(test_path)
                 except Exception:
                     return
 
@@ -269,6 +271,21 @@ class WebInterface(object):
                 #    logger.info('[COMIC-LOCATION-CHECK] Copying from cache to series directory successful (for metadata writing)')
                 #    c_status = 'success'
 
+        # Perform checks for a valid unrar (more important now this is a pre-requisite for CRC checks)
+        
+        if mylar.REQS['rar']['rar_failure']:
+            if 'windows' in mylar.OS_DETECT.lower():
+                rartool = 'unrar/WinRAR'
+            else:
+                rartool = 'unrar'
+
+            rar_msg = f'<center>Could not find a valid unrar executable in the PATH for the user running Mylar.  You must install {rartool}.</center>'
+            if c_status == 'failure':
+                c_msg += '<br />' + rar_msg
+            else:
+                c_msg = rar_msg
+                c_status = 'failure'
+
         #only display a popup on error
         mylar.START_UP = False
 
@@ -290,20 +307,47 @@ class WebInterface(object):
                              'loading': '#1c5188',
                              'failed': '#641716'}
 
-        if mylar.CONFIG.ALPHAINDEX == True:
-            comics = helpers.havetotals()
-            return serve_template(templatename="index-alphaindex.html", title="Home", comics=comics, alphaindex=mylar.CONFIG.ALPHAINDEX, legend_colors=legend_colors)
-        else:
-            return serve_template(templatename="index.html", title="Home", legend_colors=legend_colors)
+        return serve_template(templatename="index.html", title="Home", alphaindex=mylar.CONFIG.ALPHAINDEX, legend_colors=legend_colors)
     home.exposed = True
 
-    def loadhome(self, iDisplayStart=0, iDisplayLength=100, iSortCol_0=5, sSortDir_0="desc", sSearch="", **kwargs):
-        resultlist = helpers.havetotals()
-        iDisplayStart = int(iDisplayStart)
-        iDisplayLength = int(iDisplayLength)
+    def alpha_volume_counts(self, as_json = True, **kwargs):
+        # Convert if calling from params
+        if as_json == 'true':
+            as_json = True
+        elif as_json == 'false':
+            as_json = False
+
+        alphabet_lengths = dict.fromkeys(['All','#'] + list(ascii_lowercase), 0)
+        # Saving this regexp version but I can't see how it's performant compared to using in-built functions
+        #letter_query = "SELECT lower(substr(c.ComicName,1,1)) AS 'Character', Count(c.ComicID) AS 'Count' FROM Comics c WHERE c.ComicName REGEXP '^[a-zA-Z]' GROUP BY 1 UNION SELECT '#' AS 'Character', Count(c.ComicID) AS 'Count' FROM Comics c WHERE c.ComicName REGEXP '^[^a-zA-Z]' GROUP BY 1"
+        letter_query = "SELECT lower(substr(c.ComicName,1,1)) as 'Character', COUNT(c.ComicID) as 'Count' FROM Comics c WHERE hex(lower(substr(c.ComicName,1,1))) BETWEEN '61' AND '7A' GROUP BY 1 UNION SELECT '#' as 'Character', COUNT(c.ComicID) as 'Count' FROM Comics c WHERE NOT hex(lower(substr(c.ComicName,1,1))) BETWEEN '61' AND '7A' GROUP BY 1;"
+        myDB = db.DBConnection()
+        result = myDB.select(letter_query)
+        for letter_count in result:
+            alphabet_lengths['All'] += letter_count['Count']
+            alphabet_lengths[letter_count['Character']] += letter_count['Count']
+
+        if as_json:
+            return json.dumps(alphabet_lengths)
+        else:
+            return alphabet_lengths
+    alpha_volume_counts.exposed = True
+
+
+    def loadhome(self, **kwargs):
+        iDisplayStart = int(kwargs['start'])
+        iDisplayLength = int(kwargs['length'])
+        
+        if not 'selected' in kwargs.keys() or kwargs['selected'] == 'All':
+            resultlist = helpers.havetotals()
+        else:
+            resultlist = helpers.havetotals(start_char_filter=kwargs['selected'])
+
+        sSearch = kwargs['search[value]']        
         filtered = []
+
         if sSearch == "" or sSearch == None:
-            filtered = resultlist[::]
+            filtered = resultlist
         else:
             ignore_terms = []
             tsearch = sSearch
@@ -351,42 +395,56 @@ class WebInterface(object):
                 except Exception as e:
                     pass
 
-        sortcolumn = 'ComicPublisher'
-        if iSortCol_0 == '0':
-            sortcolumn = 'ComicPublisher'
-        elif iSortCol_0 == '1':
-            sortcolumn = 'ComicName'
-        elif iSortCol_0 == '2':
-            sortcolumn = 'ComicYear'
-        elif iSortCol_0 == '3':
-            sortcolumn = 'LatestIssue'
-        elif iSortCol_0 == '4':
-            sortcolumn = 'LatestDate'
-        elif iSortCol_0 == '5':
-            sortcolumn = 'percent'
-        elif iSortCol_0 == '6':
-            sortcolumn = 'Status'
+        # Multisort by using the stable nature of sort in reverse order
+        # We have to work out the number of columns based on kwargs keys
+        sort_columns = 0        
+        while f"order[{sort_columns}][column]" in kwargs.keys():
+            sort_columns += 1
 
-        #below sort is for multi-sort columns, maybe make them user configurable - not sure how to pass mutli-sort thru otherwise
-        #filtered.sort(key= itemgetter(sortcolumn2, sortcolumn), reverse=sSortDir_0 == "desc")
-        if sortcolumn == 'percent':
-            filtered.sort(key=lambda x: (x['totalissues'] is None, x['totalissues'] == '', x['totalissues']), reverse=sSortDir_0 == "asc")
-            filtered.sort(key=lambda x: (x['percent'] is None, x['percent'] == '', x['percent']), reverse=sSortDir_0 == "desc")
-            filtered.sort(key=lambda x: (x['haveissues'] is None, x['haveissues'] == '', x['haveissues']), reverse=sSortDir_0 == "desc")
-            filtered.sort(key=lambda x: (x['percent'] is None, x['percent'] == '', x['percent']), reverse=sSortDir_0 == "desc")
-        elif sortcolumn == 'LatestIssue':
-            filtered.sort(key=lambda x: (x['IntLatestIssue'] is None, x['IntLatestIssue'] == '', x['IntLatestIssue']), reverse=sSortDir_0 == "asc")
-        else:
-            filtered.sort(key=lambda x: (x[sortcolumn] is None, x[sortcolumn] == '', x[sortcolumn]), reverse=sSortDir_0 == "desc")
+        for sort_pos in range(sort_columns, 0, -1):
+            iSortCol = kwargs[f'order[{sort_pos-1}][column]']
+            sSortDir = kwargs[f'order[{sort_pos-1}][dir]']
+        
+            if iSortCol == '0':
+                sortcolumn = 'ComicPublisher'
+            elif iSortCol == '1':
+                sortcolumn = 'ComicName'
+            elif iSortCol == '2':
+                sortcolumn = 'ComicYear'
+            elif iSortCol == '3':
+                sortcolumn = 'LatestIssue'
+            elif iSortCol == '4':
+                sortcolumn = 'LatestDate'
+            elif iSortCol == '5':
+                sortcolumn = 'percent'
+            elif iSortCol == '6':
+                sortcolumn = 'recentstatus'
+            elif iSortCol == '7':
+                sortcolumn = 'Status'
+            else:
+                sortcolumn = 'ComicPublisher'
+
+            if sortcolumn == 'percent':
+                filtered.sort(key=lambda x: (x['totalissues'] is None, x['totalissues'] == '', x['totalissues'] == '?', x['totalissues']), reverse=sSortDir == "asc")
+                filtered.sort(key=lambda x: (x['percent'] is None, x['percent'] == '', x['percent']), reverse=sSortDir == "desc")
+                filtered.sort(key=lambda x: (x['haveissues'] is None, x['haveissues'] == '', x['haveissues']), reverse=sSortDir == "desc")
+                filtered.sort(key=lambda x: (x['percent'] is None, x['percent'] == '', x['percent']), reverse=sSortDir == "desc")
+            elif sortcolumn == 'LatestIssue':
+                filtered.sort(key=lambda x: (x['IntLatestIssue'] is None, x['IntLatestIssue'] == '', x['IntLatestIssue']), reverse=sSortDir == "asc")
+            else:
+                filtered.sort(key=lambda x: (x[sortcolumn] is None, x[sortcolumn] == '', x[sortcolumn]), reverse=sSortDir == "desc")
+
+
         if iDisplayLength != -1:
             rows = filtered[iDisplayStart:(iDisplayStart + iDisplayLength)]
         else:
             rows = filtered
         rows = [[row['ComicPublisher'], row['ComicName'], row['ComicYear'], row['LatestIssue'], row['LatestDate'], row['recentstatus'], row['Status'], row['percent'], row['haveissues'], row['totalissues'], row['ComicID'], row['displaytype'], row['ComicVolume'], row['cv_removed']] for row in rows]
+        
         return json.dumps({
-            'iTotalDisplayRecords': len(filtered),
-            'iTotalRecords': len(resultlist),
-            'aaData': rows,
+            'recordsFiltered': len(filtered),
+            'recordsTotal': len(resultlist),
+            'data': rows,
         })
     loadhome.exposed = True
 
@@ -1111,7 +1169,9 @@ class WebInterface(object):
         logger.info('# of results: %s' % len(filtered))
         iDisplayStart = int(iDisplayStart)
         iDisplayLength = int(iDisplayLength)
-        filtered = filtered[iDisplayStart:(iDisplayStart + iDisplayLength)]
+        # -1 is used for "All" in DataTables filters
+        if iDisplayLength > 0:
+            filtered = filtered[iDisplayStart:(iDisplayStart + iDisplayLength)]
         rows = [[row['comicid'], row['comicname'], row['publisher'], row['comicyear'], row['issues'], row['deck'], row['url'], row['type'], row['description'], row['haveit'], row['query_id']] for row in filtered]
 
         return json.dumps({
@@ -1659,7 +1719,7 @@ class WebInterface(object):
                 digitaldate = str(arcval['Digital_Date'])
                 storedate = str(arcval['Store_Date'])
 
-                int_issnum = helpers.issuedigits(issnum)
+                int_issnum = helpers.issue_number_parser(issnum).asInt
 
                 #verify the reading order if present.
                 findorder = arclist.find(issid)
@@ -2030,7 +2090,7 @@ class WebInterface(object):
                 myDB.action('DELETE from annuals WHERE ComicID=?', [ComicID])
             myDB.action('DELETE from upcoming WHERE ComicID=?', [ComicID])
             myDB.action('DELETE from readlist WHERE ComicID=?', [ComicID])
-            myDB.action('UPDATE weekly SET Status="Skipped" WHERE ComicID=? AND Status="Wanted"', [ComicID])
+            myDB.action("UPDATE weekly SET Status='Skipped' WHERE ComicID=? AND Status='Wanted'", [ComicID])
             if delete_dir: #mylar.CONFIG.DELETE_REMOVE_DIR:
                 logger.fdebug('Remove directory on series removal enabled.')
                 if seriesdir is not None:
@@ -2990,7 +3050,7 @@ class WebInterface(object):
                 try:
                     x = float(weekly['ISSUE'])
                 except ValueError as e:
-                    if any(ext in weekly['ISSUE'].upper() for ext in mylar.ISSUE_EXCEPTIONS):
+                    if helpers.issueExceptionCheck(weekly['ISSUE'], full_match=False):
                         x = weekly['ISSUE']
 
                 if x is not None:
@@ -3916,7 +3976,7 @@ class WebInterface(object):
                     si_status = ''
 
                 if si['pack']:
-                    if si['year'] not in si['filename']:
+                    if si['year'] is not None and si['year'] not in si['filename']:
                         series = '%s (%s)' % (si['filename'], si['year'])
                     else:
                         series = si['filename']
@@ -4424,7 +4484,7 @@ class WebInterface(object):
                     DynamicName = v
                     if volume is None or volume == 'None':
                         logger.info('Removing ' + ComicName + ' from the Import list')
-                        myDB.action('DELETE from importresults WHERE DynamicName=? AND (Volume is NULL OR Volume="None")', [DynamicName])
+                        myDB.action("DELETE from importresults WHERE DynamicName=? AND (Volume is NULL OR Volume='None')", [DynamicName])
                     else:
                         logger.info('Removing ' + ComicName + ' [' + str(volume) + '] from the Import list')
                         myDB.action('DELETE from importresults WHERE DynamicName=? AND Volume=?', [DynamicName, volume])
@@ -5148,12 +5208,14 @@ class WebInterface(object):
             for MSCheck in AMS:
                 thischk = myDB.select('SELECT * FROM storyarcs WHERE ComicName=? AND SeriesYear=?', [MSCheck['ComicName'], MSCheck['SeriesYear']])
                 for tchk in thischk:
-                    if helpers.issuedigits(tchk['IssueNumber']) > helpers.issuedigits(MSCheck['highvalue']):
+                    issueNumber_asInt = helpers.issue_number_parser(tchk['IssueNumber']).asInt
+
+                    if issueNumber_asInt > helpers.issue_number_parser(MSCheck['highvalue']).asInt:
                         for key in list(MSCheck.keys()):
                             if key == "highvalue":
                                 MSCheck[key] = tchk['IssueNumber']
 
-                    if helpers.issuedigits(tchk['IssueNumber']) < helpers.issuedigits(MSCheck['lowvalue']):
+                    if issueNumber_asInt < helpers.issue_number_parser(MSCheck['lowvalue']).asInt:
                         for key in list(MSCheck.keys()):
                             if key == "lowvalue":
                                 MSCheck[key] = tchk['IssueNumber']
@@ -5349,7 +5411,7 @@ class WebInterface(object):
                             logger.fdebug("issue converted to %s" % GCDissue)
                             isschk = myDB.selectone("SELECT * FROM issues WHERE Issue_Number=? AND ComicID=?", [str(GCDissue), comic['ComicID']]).fetchone()
                         else:
-                            issue_int = helpers.issuedigits(arc['IssueNumber'])
+                            issue_int = helpers.issue_number_parser(arc['IssueNumber']).asInt
                             logger.fdebug('int_issue = %s' % issue_int)
                             if mylar.CONFIG.ANNUALS_ON and 'annual' in arc['ComicName'].lower():
                                 logger.fdebug('annual checking: %s -- %s' % (issue_int, comic['ComicID']))
@@ -5442,9 +5504,9 @@ class WebInterface(object):
                             if temploc:
                                 temploc = temploc.replace('_', ' ')
                             else:
-                                logger.debug('could not parse issue number: %r', tmpfc)
-                            fcdigit = helpers.issuedigits(arc['IssueNumber'])
-                            int_iss = helpers.issuedigits(temploc)
+                                logger.debug('could not parse issue number: %r', tmpfc)                                
+                            fcdigit = helpers.issue_number_parser(arc['IssueNumber']).asInt
+                            int_iss = helpers.issue_number_parser(temploc).asInt
                             if int_iss == fcdigit:
                                 logger.fdebug('%s Issue #%s already present in StoryArc directory' % (arc['ComicName'], arc['IssueNumber']))
                                 #update storyarcs db to reflect status.
@@ -5495,7 +5557,7 @@ class WebInterface(object):
             for m_arc in arc_match:
                 #now we cycle through the issues looking for a match.
                 if m_arc['match_annual']:
-                    issue = myDB.selectone("SELECT a.Issue_Number, a.Status, a.IssueID, a.ComicName, a.IssueDate, a.Location, b.readingorder FROM annuals AS a INNER JOIN storyarcs AS b ON a.comicid = b.comicid where a.comicid=? and a.issue_number=? and a.issueid=?", [m_arc['match_id'], m_arc['match_issue'], m_arc['match_issueid']]).fetchone()
+                    issue = myDB.selectone("SELECT a.Issue_Number, a.Status, a.IssueID, a.ComicName, a.IssueDate, a.Location, b.readingorder FROM annuals AS a INNER JOIN storyarcs AS b ON a.releasecomicid = b.comicid where a.comicid=? and a.issue_number=? and a.issueid=?", [m_arc['match_id'], m_arc['match_issue'], m_arc['match_issueid']]).fetchone()
                 else:
                     issue = myDB.selectone("SELECT a.Issue_Number, a.Status, a.IssueID, a.ComicName, a.IssueDate, a.Location, b.readingorder FROM issues AS a INNER JOIN storyarcs AS b ON a.comicid = b.comicid where a.comicid=? and a.issue_number=?", [m_arc['match_id'], m_arc['match_issue']]).fetchone()
                 if issue is None: pass
@@ -6158,7 +6220,7 @@ class WebInterface(object):
             logname = ComicName + '[' + str(volume) + ']'
         logger.info("Removing import data for Comic: " + logname)
         if volume is None or volume == 'None':
-            myDB.action('DELETE from importresults WHERE DynamicName=? AND Status=? AND (Volume is NULL OR Volume="None")', [DynamicName, Status])
+            myDB.action("DELETE from importresults WHERE DynamicName=? AND Status=? AND (Volume is NULL OR Volume='None')", [DynamicName, Status])
         else:
             myDB.action('DELETE from importresults WHERE DynamicName=? AND Volume=? AND Status=?', [DynamicName, volume, Status])
         raise cherrypy.HTTPRedirect("importResults")
@@ -6318,16 +6380,16 @@ class WebInterface(object):
                                     if result['ComicYear'] != "0000" and result['ComicYear'] is not None:
                                         yearRANGE.append(str(result['ComicYear']))
                                         yearTOP = str(result['ComicYear'])
-                                getiss_num = helpers.issuedigits(getiss)
-                                miniss_num = helpers.issuedigits(minISSUE)
-                                startiss_num = helpers.issuedigits(startISSUE)
+                                getiss_num = helpers.issue_number_parser(getiss).asInt
+                                miniss_num = helpers.issue_number_parser(minISSUE).asInt
+                                startiss_num = helpers.issue_number_parser(startISSUE).asInt
                                 if int(getiss_num) > int(miniss_num):
                                     logger.fdebug('Minimum issue now set to : %s - it was %s' % (getiss, minISSUE))
                                     minISSUE = getiss
                                 if int(getiss_num) < int(startiss_num):
                                     logger.fdebug('Start issue now set to : %s - it was %s' % (getiss, startISSUE))
                                     startISSUE = str(getiss)
-                                    if helpers.issuedigits(startISSUE) == 1000 and result['ComicYear'] is not None:  # if it's an issue #1, get the year and assume that's the start.
+                                    if helpers.issue_number_parser(startISSUE).asInt == helpers.issue_number_to_int(1,None) and result['ComicYear'] is not None:  # if it's an issue #1, get the year and assume that's the start.
                                         startyear = result['ComicYear']
 
                 #taking this outside of the transaction in an attempt to stop db locking.
@@ -6342,7 +6404,7 @@ class WebInterface(object):
                 if starttheyear is None:
                     if all([yearTOP != None, yearTOP != 'None']):
                         if int(str(yearTOP)) > 0:
-                            minni = helpers.issuedigits(minISSUE)
+                            minni = helpers.issue_number_parser(minISSUE).asInt
                             #logger.info(minni)
                             if minni < 1 or minni > 999999999:
                                 maxyear = int(str(yearTOP))
@@ -6752,6 +6814,8 @@ class WebInterface(object):
                     "http_port": mylar.CONFIG.HTTP_PORT,
                     "http_root": mylar.CONFIG.HTTP_ROOT,
                     "http_pass": mylar.CONFIG.HTTP_PASSWORD,
+                    "instance_name" : mylar.CONFIG.INSTANCE_NAME,
+                    "host_return" : mylar.CONFIG.HOST_RETURN,
                     "enable_https": helpers.checked(mylar.CONFIG.ENABLE_HTTPS),
                     "https_cert": mylar.CONFIG.HTTPS_CERT,
                     "https_key": mylar.CONFIG.HTTPS_KEY,
@@ -6839,6 +6903,14 @@ class WebInterface(object):
                     "extra_newznabs": sorted(mylar.CONFIG.EXTRA_NEWZNABS, key=itemgetter(5), reverse=True),
                     "enable_ddl": helpers.checked(mylar.CONFIG.ENABLE_DDL),
                     "enable_getcomics": helpers.checked(mylar.CONFIG.ENABLE_GETCOMICS),
+                    "enable_airdcpp": helpers.checked(mylar.CONFIG.ENABLE_AIRDCPP),
+                    "airdcpp_host": mylar.CONFIG.AIRDCPP_HOST,
+                    "airdcpp_username": mylar.CONFIG.AIRDCPP_USERNAME,
+                    "airdcpp_password": mylar.CONFIG.AIRDCPP_PASSWORD,
+                    "airdcpp_download_dir": mylar.CONFIG.AIRDCPP_DOWNLOAD_DIR,
+                    "airdcpp_hubs": mylar.CONFIG.AIRDCPP_HUBS,
+                    "airdcpp_announce_hub": mylar.CONFIG.AIRDCPP_ANNOUNCE_HUB,
+                    "airdcpp_announce_bots": mylar.CONFIG.AIRDCPP_ANNOUNCE_BOTS,
                     "ddl_prefer_upscaled": helpers.checked(mylar.CONFIG.DDL_PREFER_UPSCALED),
                     "enable_external_server": helpers.checked(mylar.CONFIG.ENABLE_EXTERNAL_SERVER),
                     "external_server": mylar.CONFIG.EXTERNAL_SERVER,
@@ -7330,7 +7402,7 @@ class WebInterface(object):
                            'prowl_enabled', 'prowl_onsnatch', 'pushover_enabled', 'pushover_onsnatch', 'pushover_image', 'mattermost_enabled', 'mattermost_onsnatch', 'boxcar_enabled',
                            'boxcar_onsnatch', 'pushbullet_enabled', 'pushbullet_onsnatch', 'telegram_enabled', 'telegram_onsnatch', 'telegram_image', 'discord_enabled', 'discord_onsnatch', 'slack_enabled', 'slack_onsnatch',
                            'email_enabled', 'email_enc', 'email_ongrab', 'email_onpost', 'gotify_enabled', 'gotify_server_url', 'gotify_token', 'gotify_onsnatch', 'opds_enable', 'opds_authentication', 'opds_metainfo', 'opds_pagesize', 'enable_ddl',
-                           'enable_getcomics', 'enable_external_server', 'ddl_prefer_upscaled', 'deluge_pause'] #enable_public
+                           'enable_getcomics', 'enable_airdcpp', 'enable_external_server', 'ddl_prefer_upscaled', 'deluge_pause'] #enable_public
 
         for checked_config in checked_configs:
             if checked_config not in kwargs:
@@ -7508,6 +7580,96 @@ class WebInterface(object):
 
     SABtest.exposed = True
 
+    def AirDCPPtest(self, airdcpphost=None, airdcppusername=None, airdcpppassword=None):
+        if airdcpphost is None:
+            airdcpphost = mylar.CONFIG.AIRDCPP_HOST
+        if airdcppusername is None:
+            airdcppusername = mylar.CONFIG.AIRDCPP_USERNAME
+        if airdcpppassword is None:
+            airdcpppassword = mylar.CONFIG.AIRDCPP_PASSWORD
+
+        logger.fdebug('Now attempting to test AirDC++ connection')
+        logger.fdebug('testing connection to AirDC++ @ ' + airdcpphost)
+
+        if not airdcpphost.endswith('/'):
+            airdcpphost = airdcpphost + '/'
+
+        api_url = airdcpphost
+        if not api_url.endswith('api/v1'):
+            api_url += 'api/v1'
+
+        query_url = f"{api_url}/system/system_info"
+
+        if airdcpphost.startswith('https'):
+            verify = True
+        else:
+            verify = False
+
+        version = 'Unknown'
+        try:
+            session = requests.Session()
+            if airdcppusername and airdcpppassword:
+                session.auth = (airdcppusername, airdcpppassword)
+
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.182 Safari/537.36'
+            }
+
+            r = session.get(query_url, headers=headers, verify=verify, timeout=30)
+        except Exception as e:
+            logger.warn('Error fetching data from %s: %s' % (query_url, e))
+            if requests.exceptions.SSLError:
+                logger.warn(
+                    'Cannot verify ssl certificate. Attempting to authenticate with no ssl-certificate verification.')
+                try:
+                    from requests.packages.urllib3 import disable_warnings
+                    disable_warnings()
+                except:
+                    logger.warn('Unable to disable https warnings. Expect some spam if using https providers.')
+
+                verify = False
+
+                try:
+                    session = requests.Session()
+                    if airdcppusername and airdcpppassword:
+                        session.auth = (airdcppusername, airdcpppassword)
+
+                    r = session.get(query_url, headers=headers, verify=verify, timeout=30)
+                except Exception as e:
+                    logger.warn('Error fetching data from %s: %s' % (airdcpphost, e))
+                    return json.dumps(
+                        {"status": False, "message": "Unable to retrieve data from AirDC++.", "version": str(version)})
+            else:
+                return json.dumps(
+                    {"status": False, "message": "Unable to retrieve data from AirDC++.", "version": str(version)})
+
+        logger.fdebug('status code: ' + str(r.status_code))
+
+        if str(r.status_code) != '200':
+            logger.warn('Unable to properly query AirDC++ @' + airdcpphost + ' [Status Code returned: ' + str(
+                r.status_code) + ']')
+            return json.dumps(
+                {"status": False, "message": "Invalid credentials or connection error.", "version": str(version)})
+        else:
+            data = r.json()
+            try:
+                # Try to extract version from the response
+                version = data.get('client_version', 'Unknown')
+                logger.info('AirDC++ version: %s' % version)
+
+                # Save the version to config
+                mylar.CONFIG.AIRDCPP_VERSION = version
+                mylar.CONFIG.writeconfig(values={'airdcpp_version': version})
+
+                return json.dumps(
+                    {"status": True, "message": "Successfully connected to AirDC++.", "version": str(version)})
+            except Exception as e:
+                logger.error('Error parsing AirDC++ response: %s' % e)
+                return json.dumps(
+                    {"status": False, "message": "Error parsing AirDC++ response.", "version": str(version)})
+
+    AirDCPPtest.exposed = True
+
     def NZBGet_test(self, nzbhost=None, nzbport=None, nzbusername=None, nzbpassword=None, nzbsub=None):
         if any([nzbhost is None, nzbhost == 'None']):
             nzbhost = mylar.CONFIG.NZBGET_HOST
@@ -7619,7 +7781,7 @@ class WebInterface(object):
     def getComicArtwork(self, ComicID=None, imageURL=None):
 
         from mylar import cache
-        logger.info("Retrieving image for : " + comicID)
+        logger.info("Retrieving image for : " + ComicID)
         return cache.getArtwork(ComicID, imageURL)
 
     getComicArtwork.exposed = True
@@ -7859,8 +8021,10 @@ class WebInterface(object):
             if meta_data['cover_artist'] is not None:
                 issuecoverartist = meta_data['cover_artist']
             issuesummary = meta_data['summary']
+
+        iss_filename = None
+
         if meta_data is not None:
-            iss_filename = None
             if filelocation is not None:
                 iss_filename = os.path.split(filelocation)[1]
 
@@ -8753,7 +8917,7 @@ class WebInterface(object):
                 try:
                     x = float(weekly['ISSUE'])
                 except ValueError as e:
-                    if any(ext in weekly['ISSUE'].upper() for ext in mylar.ISSUE_EXCEPTIONS):
+                    if helpers.issueExceptionCheck(weekly['ISSUE'], full_match=False):
                         x = weekly['ISSUE']
 
                 if x is not None:
@@ -9462,7 +9626,7 @@ class WebInterface(object):
                 myDB.action("DELETE FROM annuals WHERE ComicID=?", [comicid])
             myDB.action('DELETE from upcoming WHERE ComicID=?', [comicid])
             myDB.action('DELETE from readlist WHERE ComicID=?', [comicid])
-            myDB.action('UPDATE weekly SET Status="Skipped" WHERE ComicID=? AND Status="Wanted"', [comicid])
+            myDB.action("UPDATE weekly SET Status='Skipped' WHERE ComicID=? AND Status='Wanted'", [comicid])
             warnings = 0
             if delete_dir:
                 logger.fdebug('Remove directory on series removal enabled.')
@@ -9521,6 +9685,7 @@ class WebInterface(object):
         issuesonly = True if issuesonly == 'true' else False
 
         results = []
+        warnings = set()
 
         try:
             books = cblRoot.findall(".//Book")
@@ -9568,25 +9733,27 @@ class WebInterface(object):
                     if iss_exists:
                         iss_status = issue['Status']
                         
-                        match iss_status:
-                            case 'Downloaded' | 'Wanted' | 'Snatched' | 'Failed':
-                                action_text = 'No action needed'
-                            case 'Archived':
-                                if ignorearchived :
-                                    action_text = 'No action needed' 
-                                else:
-                                    action_text = "Mark issue as Wanted"
-                                    missing_issue_count += 1
-                            case _:
+                        if iss_status in ['Downloaded', 'Wanted', 'Snatched', 'Failed']:
+                            action_text = 'No action needed'
+                        elif iss_status == 'Archived':
+                            if ignorearchived :
+                                action_text = 'No action needed' 
+                            else:
+                                action_text = "Mark issue as Wanted"
                                 missing_issue_count += 1
-                                action_text = 'Mark issue as Wanted'
+                        else:
+                            missing_issue_count += 1
+                            action_text = 'Mark issue as Wanted'
+                    else:
+                        action_text = f'Warning: Could not find issue {cvIssueID} in volume {cvSeriesID}.'
+                        missing_issue_count += 1
+                        warnings.add('Volumes in Mylar do not recognise some Issue IDs.  This may be due to a list error.')
                 else:
                     iss_exists = False
                     iss_status = 'Missing'
                     missing_issue_count += 1
                     action_text = 'Add volume & mark issue as Wanted'
                 
-
                 # List to return to import table display: Entry, Volume, Issue, Status, Action
                 results.append([issueIndex, 
                                 f'<a href="{"comicDetails?ComicID=" if vol_exists else "https://comicvine.com/volume/4050-"}{cvSeriesID}" target="{"_self" if vol_exists else "_blank"}">{volumeName} ({volumeYear})</a>',
@@ -9598,9 +9765,12 @@ class WebInterface(object):
             return json.dumps({'status': 'error', 'message' : f'Error processing CBL file.  Unhandled Exception: {str(e)}'})
         
         if newvol_count > 200:
-            warning_text = 'Attempting to add more than 200 series may cause problems due to CV API limits.  Consider breaking up this list into smaller parts.'
+            warnings.add('Attempting to add more than 200 series may cause problems due to CV API limits.  Consider breaking up this list into smaller parts.')
         elif newvol_count > 100:
-            warning_text = 'Attempting to add a lot of new series.  Consider your CV API limits before triggering the import.'
+            warnings.add('Attempting to add a lot of new series.  Consider your CV API limits before triggering the import.')
+
+        if len(warnings) > 0:
+            warning_text = '<br >'.join(warnings)
         else:
             warning_text = ''
 
@@ -9627,7 +9797,7 @@ class WebInterface(object):
 
         logger.info(f'Processing CBL File {cblFile.filename} to set up volumes and wanted issues')
         warning_text = ''
-        warnings = {}
+        warnings = set()
 
         try:
             cblXML = ET.parse(cblFile.file)
@@ -9692,18 +9862,17 @@ class WebInterface(object):
                         warnings.add(f'Some issues of existing volumes could not be found.  Check logs for details.')
                     else:
                         wantissue = False
-                        match issue['Status']:
-                            case 'Downloaded' | 'Wanted' | 'Snatched' | 'Failed':
-                                logger.fdebug(f'CBL File: Volume "{volumeName} ({volumeYear})" exists, Issue #{issueNumber} already Wanted')
+                        if issue['Status'] in ['Downloaded', 'Wanted', 'Snatched', 'Failed']:
+                            logger.fdebug(f'CBL File: Volume "{volumeName} ({volumeYear})" exists, Issue #{issueNumber} already Wanted')
+                            counters['issues_skipped'] += 1
+                        elif issue['Status'] == 'Archived':
+                            if ignorearchived :
+                                logger.fdebug(f'CBL File: Volume "{volumeName} ({volumeYear})" exists, Issue #{issueNumber} Archived.  Ignoring')
                                 counters['issues_skipped'] += 1
-                            case 'Archived':
-                                if ignorearchived :
-                                    logger.fdebug(f'CBL File: Volume "{volumeName} ({volumeYear})" exists, Issue #{issueNumber} Archived.  Ignoring')
-                                    counters['issues_skipped'] += 1
-                                else:
-                                    wantissue = True
-                            case _:
+                            else:
                                 wantissue = True
+                        else:
+                            wantissue = True
                         
                         if wantissue:
                             logger.fdebug(f'CBL File: Volume "{volumeName} ({volumeYear})" already exists, Issue #{issueNumber} to be marked as Wanted')
