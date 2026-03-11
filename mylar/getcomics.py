@@ -31,6 +31,7 @@ import json
 import mylar
 from operator import itemgetter
 from mylar import db, logger, helpers, search_filer
+from mylar.downloaders.jdownloader2 import JDownloader2
 
 class GC(object):
 
@@ -158,6 +159,15 @@ class GC(object):
         self.pack_receipts = ['+ TPBs', '+TPBs', '+ TPB', '+TPB', 'TPB', '+ Deluxe Books', '+ Annuals', '+Annuals', ' & ']
 
         self.provider_stat = provider_stat
+
+        self.jd2 = None
+        if mylar.CONFIG.JD2_ENABLE and mylar.CONFIG.JD2_URL:
+            try:
+                self.jd2 = JDownloader2(base_url=mylar.CONFIG.JD2_URL)
+                logger.fdebug('[JD2] Initialized JD2 helper in GetComics.')
+            except Exception as err:
+                logger.warn('[JD2] Unable to initialize helper: %s', err)
+                self.jd2 = None
 
     def search(self,is_info=None):
 
@@ -909,8 +919,6 @@ class GC(object):
             ' (go get some take-out)...' % (dl_selection, series, year, size)
         )
 
-        tmp_filename = '%s (%s)' % (series, year)
-
         links = []
 
         if link is None and possible_more.name == 'ul':
@@ -1098,27 +1106,59 @@ class GC(object):
                 # this is needed so that we assign some tmp filename
                 # (it will get renamed upon completion anyways)
                 #tmp_filename = comicinfo[0]['nzbtitle']
+                
+            tmp_filename = '%s (%s)' % (x['series'], x['year'])    
 
-            mylar.DDL_QUEUE.put(
-                {
-                    'link': x['links'],
-                    'mainlink': mainlink,
-                    'series': x['series'],
-                    'year': x['year'],
-                    'size': x['size'],
-                    'comicid': self.comicid,
-                    'issueid': self.issueid,
-                    'oneoff': self.oneoff,
-                    'id': mod_id,
-                    'link_type': link_type,
-                    'filename': tmp_filename,
-                    'comicinfo': comicinfo,
-                    'packinfo': packinfo,
-                    'site': 'DDL(GetComics)',
-                    'remote_filesize': 0,
-                    'resume': None,
-                }
-            )
+            queue_payload = {
+                'link': x['links'],
+                'mainlink': mainlink,
+                'series': x['series'],
+                'year': x['year'],
+                'size': x['size'],
+                'comicid': self.comicid,
+                'issueid': self.issueid,
+                'oneoff': self.oneoff,
+                'id': mod_id,
+                'link_type': link_type,
+                'filename': tmp_filename,
+                'comicinfo': comicinfo,
+                'packinfo': packinfo,
+                'site': 'DDL(GetComics)',
+                'remote_filesize': 0,
+                'resume': None,
+            }
+
+            if self.jd2 is not None:
+                
+                jd2_priority_links = {}
+                jd2_priority_list = ["HIGHEST", "HIGH", "DEFAULT", "LOWEST"]
+                jd2_priority_map = {}
+                
+                for i, site in enumerate(mylar.CONFIG.DDL_PRIORITY_ORDER):
+                    jd2_priority_map[site] = jd2_priority_list[i] if i < len(jd2_priority_list) else "LOWEST"
+                    
+                if isinstance(tmp_links, list):
+                    for entry in tmp_links:
+                        if isinstance(entry, dict):
+                            url = entry.get('links')
+                            jd2_lt_site = entry.get('site').lower()
+                            if any([jd2_lt_site == 'main server', jd2_lt_site == 'download now', jd2_lt_site == 'mirror download']):
+                                jd2_priority_links[url] = jd2_priority_map['main']
+                            else:
+                                jd2_priority_links[url] = jd2_priority_map[jd2_lt_site]
+            
+                jd2_queue_payload = dict(queue_payload)
+                jd2_queue_payload.update({
+                    'jd2_job_id': 0,
+                    'jd2_priority_links': jd2_priority_links,
+                })
+                try:
+                    mylar.JD2_QUEUE.put(jd2_queue_payload)
+                    logger.info('[JD2] Enqueued %s for downloading.', tmp_filename)
+                except Exception as err:
+                    logger.warn('[JD2] Unable to enqueue %s for downloading: %s', tmp_filename, err)
+            else:
+                mylar.DDL_QUEUE.put(queue_payload)
             cnt += 1
 
         return {'success': True, 'site': link_type}

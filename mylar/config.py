@@ -154,12 +154,13 @@ _CONFIG_DEFINITIONS = OrderedDict({
 
     'CVAPI_RATE' : (int, 'CV', 2),
     'COMICVINE_API': (str, 'CV', None),
+    'COMICVINE_URL': (str, 'CV', 'https://comicvine.gamespot.com/api/'),
     'IGNORED_PUBLISHERS' : (str, 'CV', ""),
     'CV_VERIFY': (bool, 'CV', True),
     'CV_ONLY': (bool, 'CV', True),
     'CV_ONETIMER': (bool, 'CV', True),
     'CVINFO': (bool, 'CV', False),
-    'CV_USER_AGENT': (str, 'CV', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'),
+    'CV_USER_AGENT': (str, 'CV', 'comictagger image fetcher'),
     'IMPRINT_MAPPING_TYPE': (str, 'CV', 'CV'),  # either 'CV' for ComicVine or 'JSON' for imprints.json to choose which naming to use for imprints
 
     'LOG_DIR' : (str, 'Logs', None),
@@ -375,6 +376,9 @@ _CONFIG_DEFINITIONS = OrderedDict({
     'ENABLE_PROXY': (bool, 'DDL', False),
     'HTTP_PROXY': (str, 'DDL', None),
     'HTTPS_PROXY': (str, 'DDL', None),
+    'JD2_ENABLE': (bool, 'DDL', False),
+    'JD2_DEST_DIR': (str, 'DDL', None),
+    'JD2_URL': (str, 'DDL', None),
 
     'ENABLE_AIRDCPP': (bool, 'DCPP', False),
     'AIRDCPP_HOST': (str, 'DCPP', ""),
@@ -1360,6 +1364,17 @@ class Config(object):
             # Set the actual API key, so mylar does not appear broken from the start
             self.COMICVINE_API = self.COMICVINE_API[4:]
 
+        # Ensure ComicVine URL is always set and normalized according to previous url 
+        if any([self.COMICVINE_URL is None, self.COMICVINE_URL == '', self.COMICVINE_URL == 'None']):
+            self.COMICVINE_URL = 'https://comicvine.gamespot.com/api/'
+        else:
+            self.COMICVINE_URL = helpers.clean_url(self.COMICVINE_URL)
+            if not self.COMICVINE_URL.endswith('/'):
+                self.COMICVINE_URL += '/'
+        config.set('CV', 'comicvine_url', self.COMICVINE_URL)
+
+        mylar.CVURL = self.COMICVINE_URL
+
         if self.SEARCH_INTERVAL < 360:
             logger.fdebug('Search interval too low. Resetting to 6 hour minimum')
             self.SEARCH_INTERVAL = 360
@@ -1548,7 +1563,9 @@ class Config(object):
 
         #make sure the user_agent is running a current version and write it to the .ComicTagger file for use with CT
         if '42.0.2311.135' in self.CV_USER_AGENT:
-            self.CV_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+            self.CV_USER_AGENT = 'comictagger image fetcher'
+        if '122.0.0.0' in self.CV_USER_AGENT:
+            self.CV_USER_AGENT = 'comictagger image fetcher'
 
         ct_settingsfile = os.path.join(self.CT_SETTINGSPATH, 'settings')
         if os.path.exists(ct_settingsfile):
@@ -1605,6 +1622,13 @@ class Config(object):
                 mylar.queue_schedule('ddl_queue', 'start')
             elif self.ENABLE_DDL is False:
                 mylar.queue_schedule('ddl_queue', 'stop')
+
+            if getattr(self, 'JD2_ENABLE', False) is True:
+                if not getattr(self, 'JD2_DEST_DIR', None):
+                    self.JD2_DEST_DIR = mylar.CONFIG.DDL_LOCATION
+                mylar.queue_schedule('jd2_queue', 'start')
+            else:
+                mylar.queue_schedule('jd2_queue', 'stop')
 
         if self.FOLDER_FORMAT is None:
             setattr(self, 'FOLDER_FORMAT', '$Series ($Year)')
