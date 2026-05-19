@@ -76,6 +76,7 @@ from mylar import (
     updater,
     weeklypull,
 )
+from mylar.queues import queue_info
 from mylar.auth import (
     AuthController,
     require,
@@ -363,8 +364,8 @@ class WebInterface(object):
 
             searchname = sSearch.split()
             searchname = '*'.join(searchname)
-            searchname = re.sub('[\:\-\%\$\#\@\!\.\,\;\/\(\)\+\=\?]','*', sSearch.lower())
-            searchpattern = '*%s*' % re.sub('\s','*', searchname.lower())
+            searchname = re.sub(r'[\:\-\%\$\#\@\!\.\,\;\/\(\)\+\=\?]','*', sSearch.lower())
+            searchpattern = '*%s*' % re.sub(r'\s','*', searchname.lower())
             fields_to_check = ['ComicName', 'ComicPublisher', 'ComicYear', 'recentstatus', 'displaytype']
 
             for row in resultlist:
@@ -496,6 +497,8 @@ class WebInterface(object):
                      'cv_removed': 0,
                      'DetailURL': 'https://comicvine.com/volume/4050-%s' % ComicID}
         else:
+            # sqlite3.Row returns an immutable mapping; convert so we can adjust values safely
+            comic = dict(comic)
             secondary_folders = None
             if mylar.CONFIG.MULTIPLE_DEST_DIRS:
                 try:
@@ -567,6 +570,8 @@ class WebInterface(object):
                 if run_them_down is True:
                     updater.forceRescan(ComicID)
                     comic = myDB.selectone('SELECT * FROM comics WHERE ComicID=?', [ComicID]).fetchone()
+                    if comic is not None:
+                        comic = dict(comic)
 
             totalissues = comic['Total']
             haveissues = comic['Have']
@@ -1127,8 +1132,8 @@ class WebInterface(object):
             searchname = sSearch.split()
             searchname = '*'.join(searchname)
 
-            searchname = re.sub('[\:\-\%\$\#\@\!\.\,\;\/\(\)\+\=\?]','*', sSearch.lower())
-            searchpattern = '*%s*' % re.sub('\s','*', searchname.lower())
+            searchname = re.sub(r'[\:\-\%\$\#\@\!\.\,\;\/\(\)\+\=\?]','*', sSearch.lower())
+            searchpattern = '*%s*' % re.sub(r'\s','*', searchname.lower())
             fields_to_check = ['comicname', 'volume', 'type', 'publisher', 'comicyear']
             for row in results:
                 try:
@@ -1679,7 +1684,7 @@ class WebInterface(object):
                 comicname = arcval['ComicName']
                 st_d = mylar.filechecker.FileChecker(watchcomic=comicname)
                 st_dyninfo = st_d.dynamic_replace(comicname)
-                dynamic_name = re.sub('[\|\s]','', st_dyninfo['mod_seriesname'].lower()).strip()
+                dynamic_name = re.sub(r'[\|\s]','', st_dyninfo['mod_seriesname'].lower()).strip()
 
                 issname = arcval['Issue_Name']
                 issid = str(arcval['IssueID'])
@@ -1731,7 +1736,7 @@ class WebInterface(object):
                         #last entry doesn't have a trailling '|'
                         roslen = arclist[findorder:]
                     rosre = re.sub(issid,'', roslen)
-                    readingorder = int(re.sub('[\,\|]','', rosre).strip())
+                    readingorder = int(re.sub(r'[\,\|]','', rosre).strip())
                 else:
                     readingorder = 0
                 logger.fdebug('[%s] issueid: %s - findorder#: %s' % (readingorder, issid, findorder))
@@ -4103,7 +4108,7 @@ class WebInterface(object):
                 if type(v) is list:
                     comicid = str(' '.join(v))
                 elif type(v) is str:
-                    comicid = re.sub('[\]\[\']', '', v) #v.decode('utf-8').encode('ascii')).strip()
+                    comicid = re.sub(r'[\]\[\']', '', v) #v.decode('utf-8').encode('ascii')).strip()
                 else:
                     comicid = v
 
@@ -4272,7 +4277,7 @@ class WebInterface(object):
                             'jobname': jb['JobName'],
                             'status': status})
             jobresults = tmp
-        queues = helpers.queue_info()
+        queues = queue_info()
         return serve_template(templatename="manage.html", title="Manage", mylarRoot=mylarRoot, jobs=jobresults, queues=queues, scan_info=scan_info)
     manage.exposed = True
 
@@ -4454,12 +4459,12 @@ class WebInterface(object):
                     comicid_st = k.find('|')
                     if comicid_st == -1:
                         comicid = None
-                        volume = re.sub('[\[\]]', '', k[Volst:]).strip()
+                        volume = re.sub(r'[\[\]]', '', k[Volst:]).strip()
                     else:
                         comicid = k[comicid_st+1:]
                         if comicid == 'None':
                             comicid = None
-                        volume = re.sub('[\[\]]', '', k[Volst:comicid_st]).strip()
+                        volume = re.sub(r'[\[\]]', '', k[Volst:comicid_st]).strip()
                     ComicName = k[:Volst].strip()
                     DynamicName = v
                     cid = ComicName
@@ -4474,12 +4479,12 @@ class WebInterface(object):
                     comicid_st = k.find('|')
                     if comicid_st == -1:
                         comicid = None
-                        volume = re.sub('[\[\]]', '', k[Volst:]).strip()
+                        volume = re.sub(r'[\[\]]', '', k[Volst:]).strip()
                     else:
                         comicid = k[comicid_st+1:]
                         if comicid == 'None':
                             comicid = None
-                        volume = re.sub('[\[\]]', '', k[Volst:comicid_st]).strip()
+                        volume = re.sub(r'[\[\]]', '', k[Volst:comicid_st]).strip()
                     ComicName = k[:Volst].strip()
                     DynamicName = v
                     if volume is None or volume == 'None':
@@ -4509,7 +4514,7 @@ class WebInterface(object):
             #k = Comicname[ComicYear]
             #v = ComicID
             comyr = k.find('[')
-            ComicYear = re.sub('[\[\]]', '', k[comyr:]).strip()
+            ComicYear = re.sub(r'[\[\]]', '', k[comyr:]).strip()
             ComicName = k[:comyr].strip()
             if isinstance(v, list):
                 #because multiple items can have the same comicname & year, we need to make sure they're all unique entries
@@ -4669,8 +4674,8 @@ class WebInterface(object):
         else:
             searchname = sSearch.split()
             searchname = '*'.join(searchname)
-            searchname = re.sub('[\:\-\%\$\#\@\!\.\,\;\/\(\)\+\=\?]','*', sSearch.lower())
-            searchpattern = '*%s*' % re.sub('\s','*', searchname.lower())
+            searchname = re.sub(r'[\:\-\%\$\#\@\!\.\,\;\/\(\)\+\=\?]','*', sSearch.lower())
+            searchpattern = '*%s*' % re.sub(r'\s','*', searchname.lower())
             for row in resultlist:
                 searchname = fnmatch.fnmatch(row['ComicName'].lower(), searchpattern)
                 if row['StoryArc'] is not None:
@@ -5387,7 +5392,7 @@ class WebInterface(object):
                 matcheroso = "no"
 
                 dyn_name = arc['DynamicComicName']
-                dyn_name = re.sub('[\|\s]','', dyn_name.lower()).strip()
+                dyn_name = re.sub(r'[\|\s]','', dyn_name.lower()).strip()
                 if mylar.CONFIG.ANNUALS_ON:
                     dyn_name = re.sub('2021annual', '', dyn_name).strip()
                     dyn_name = re.sub('annual', '', dyn_name).strip()
@@ -5395,11 +5400,11 @@ class WebInterface(object):
 
                 for comic in comics:
                     mod_watch = comic['DynamicComicName'] #is from the comics db
-                    mod_watch = re.sub('[\|\s]','', mod_watch.lower()).strip()
+                    mod_watch = re.sub(r'[\|\s]','', mod_watch.lower()).strip()
                     if mylar.CONFIG.ANNUALS_ON:
-                        tmp_chkr = re.sub('[\|\s]', '', re.sub('2021annual', '', mod_watch)).strip()
-                        mod_watch = re.sub('[\|\s]', '', re.sub('annual', '', tmp_chkr)).strip()
-                    logger.fdebug('mod_watch: %s' % re.sub('[\|\s]', '', mod_watch.lower()).strip())
+                        tmp_chkr = re.sub(r'[\|\s]', '', re.sub('2021annual', '', mod_watch)).strip()
+                        mod_watch = re.sub(r'[\|\s]', '', re.sub('annual', '', tmp_chkr)).strip()
+                    logger.fdebug('mod_watch: %s' % re.sub(r'[\|\s]', '', mod_watch.lower()).strip())
                     if mod_watch == dyn_name:
                         logger.fdebug("initial name match - confirming issue # is present in series")
                         if comic['ComicID'][:1] == 'G':
@@ -5494,7 +5499,7 @@ class WebInterface(object):
                 if filelist is not None and mylar.CONFIG.STORYARCDIR:
                     logger.fdebug('[NO WATCHLIST MATCH] Checking against local Arc directory for given issue.')
                     fn = 0
-                    valids = [x for x in filelist if re.sub('[\|\s]','', x['dynamic_name'].lower()).strip() == re.sub('[\|\s]','', arc['DynamicComicName'].lower()).strip()]
+                    valids = [x for x in filelist if re.sub(r'[\|\s]','', x['dynamic_name'].lower()).strip() == re.sub(r'[\|\s]','', arc['DynamicComicName'].lower()).strip()]
                     logger.fdebug('valids: %s' % valids)
                     if len(valids) > 0:
                         for tmpfc in valids: #filelist:
@@ -6435,8 +6440,8 @@ class WebInterface(object):
                 mode='series'
                 displaycomic = helpers.filesafe(ComicName)
                 if 'one-shot' not in displaycomic.lower():
-                    displaycomic = re.sub('[\-]','', displaycomic).strip()
-                displaycomic = re.sub('\s+', ' ', displaycomic).strip()
+                    displaycomic = re.sub(r'[\-]','', displaycomic).strip()
+                displaycomic = re.sub(r'\s+', ' ', displaycomic).strip()
                 logger.fdebug('[IMPORT] displaycomic : %s' % displaycomic)
                 logger.fdebug('[IMPORT] comicname : %s' % ComicName)
                 searchterm = '"' + displaycomic + '"'
@@ -6467,10 +6472,10 @@ class WebInterface(object):
                         totalissues = int(results['issues']) / 12
 
                     totalyear_range = int(result_year) + totalissues    #2000 + (101 / 12) 2000 +8.4 = 2008
-                    logger.fdebug('[IMPORT] [%s] Comparing: %s - TO - %s' % (totalyear_range, re.sub('[\|\s]', '', DynamicName.lower()).strip(), re.sub('[\|\s]', '', result_name.lower()).strip()))
+                    logger.fdebug('[IMPORT] [%s] Comparing: %s - TO - %s' % (totalyear_range, re.sub(r'[\|\s]', '', DynamicName.lower()).strip(), re.sub(r'[\|\s]', '', result_name.lower()).strip()))
                     if any([str(totalyear_range) in results['seriesrange'], result_year in results['seriesrange']]):
                         logger.fdebug('[IMPORT] LastIssueID: %s' % results['lastissueid'])
-                        if re.sub('[\|\s]', '', DynamicName.lower()).strip() ==  re.sub('[\|\s]', '', result_name.lower()).strip():
+                        if re.sub(r'[\|\s]', '', DynamicName.lower()).strip() ==  re.sub(r'[\|\s]', '', result_name.lower()).strip():
                             logger.fdebug('[IMPORT MATCH] %s (%s)' % (result_name, result_comicid))
                             search_matches.append({'comicid':       results['comicid'],
                                                    'series':        results['name'],
@@ -6508,9 +6513,9 @@ class WebInterface(object):
                                 totalissues = int(results['issues']) / 12
 
                             totalyear_range = int(result_year) + totalissues    #2000 + (101 / 12) 2000 +8.4 = 2008
-                            logger.fdebug('[IMPORT][%s] Comparing: %s - TO - %s' % (totalyear_range, re.sub('[\|\s]', '', DynamicName.lower()).strip(), re.sub('[\|\s]', '', result_name.lower()).strip()))
+                            logger.fdebug('[IMPORT][%s] Comparing: %s - TO - %s' % (totalyear_range, re.sub(r'[\|\s]', '', DynamicName.lower()).strip(), re.sub(r'[\|\s]', '', result_name.lower()).strip()))
                             if any([str(totalyear_range) in results['seriesrange'], result_year in results['seriesrange']]):
-                                if re.sub('[\|\s]', '', DynamicName.lower()).strip() ==  re.sub('[\|\s]', '', result_name.lower()).strip():
+                                if re.sub(r'[\|\s]', '', DynamicName.lower()).strip() ==  re.sub(r'[\|\s]', '', result_name.lower()).strip():
                                     logger.fdebug('[IMPORT MATCH] %s (%s)' % (result_name, result_comicid))
                                     search_matches.append({'comicid':       results['comicid'],
                                                            'series':        results['name'],
@@ -6784,14 +6789,14 @@ class WebInterface(object):
                     freq.update({'Experimental': row['Frequency']})
 
 
-            elif [True for x in freq if re.sub("\(newznab\)", "", str(row['Provider'])).strip() in x]:
+            elif [True for x in freq if re.sub(r"\(newznab\)", "", str(row['Provider'])).strip() in x]:
                 try:
-                    tmpval = freq[re.sub("\(newznab\)", "", row['Provider']).strip()]
-                    freq.update({re.sub("\(newznab\)", "", row['Provider']).strip(): tmpval + row['Frequency']})
+                    tmpval = freq[re.sub(r"\(newznab\)", "", row['Provider']).strip()]
+                    freq.update({re.sub(r"\(newznab\)", "", row['Provider']).strip(): tmpval + row['Frequency']})
                 except:
-                    freq.update({re.sub("\(newznab\)", "", row['Provider']).strip(): row['Frequency']})
+                    freq.update({re.sub(r"\(newznab\)", "", row['Provider']).strip(): row['Frequency']})
             else:
-                freq.update({re.sub("\(newznab\)", "", row['Provider']).strip(): row['Frequency']})
+                freq.update({re.sub(r"\(newznab\)", "", row['Provider']).strip(): row['Frequency']})
 
             freq_tot += row['Frequency']
 
@@ -6826,6 +6831,7 @@ class WebInterface(object):
                     "launch_browser": helpers.checked(mylar.CONFIG.LAUNCH_BROWSER),
                     "auto_update": helpers.checked(mylar.CONFIG.AUTO_UPDATE),
                     "max_logsize": mylar.CONFIG.MAX_LOGSIZE,
+                    "keep_html_cache": helpers.checked(mylar.CONFIG.KEEP_HTML_CACHE),
                     "annuals_on": helpers.checked(mylar.CONFIG.ANNUALS_ON),
                     "enable_check_folder": helpers.checked(mylar.CONFIG.ENABLE_CHECK_FOLDER),
                     "check_folder": mylar.CONFIG.CHECK_FOLDER,
@@ -7085,7 +7091,7 @@ class WebInterface(object):
         b = urllib.parse.unquote_plus(comicname)
 #        cname = b.decode("utf-8")
         cname = b #.encode('utf-8')
-        cname = re.sub("\,", "", cname)
+        cname = re.sub(r"\,", "", cname)
 
         if mogcname != None:
             c = urllib.parse.unquote_plus(mogcname)
@@ -7395,7 +7401,7 @@ class WebInterface(object):
 
 
     def configUpdate(self, **kwargs):
-        checked_configs = ['enable_https', 'launch_browser', 'backup_on_start', 'syno_fix', 'auto_update', 'annuals_on', 'api_enabled', 'nzb_startup_search',
+        checked_configs = ['enable_https', 'launch_browser', 'backup_on_start', 'keep_html_cache', 'syno_fix', 'auto_update', 'annuals_on', 'api_enabled', 'nzb_startup_search',
                            'enforce_perms', 'sab_to_mylar', 'torrent_local', 'torrent_seedbox', 'rtorrent_ssl', 'rtorrent_verify', 'rtorrent_startonload',
                            'enable_torrents', 'enable_rss', 'experimental', 'enable_torrent_search', 'enable_32p', 'enable_torznab',
                            'newznab', 'use_minsize', 'use_maxsize', 'ddump', 'failed_download_handling', 'sab_client_post_processing', 'nzbget_client_post_processing',
@@ -7828,7 +7834,7 @@ class WebInterface(object):
         logger.debug("Responding to Prometheus metrics request")
         cherrypy.response.headers['Content-Type'] = "text/plain"
         q_metrics = {name: {} for name in ["alive", "size", "started"]}
-        for q in helpers.queue_info():
+        for q in queue_info():
             normalised_name = q.name.replace("-", "_")
 
             q_metrics["size"][normalised_name] = q.size
