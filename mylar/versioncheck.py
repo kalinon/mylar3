@@ -82,6 +82,8 @@ def runGit(args, ptv=None):
         elif gitworked:
             output = output.stdout
             break
+        else:
+            output = None
 
     return output
 
@@ -167,7 +169,7 @@ def getVersion(ptv):
             else:
                 for line in branch_name.split('\n'):
                     if '*' in line:
-                        branch = re.sub('[\*\n]','',line).strip()
+                        branch = re.sub(r'[\*\n]','',line).strip()
                         break
 
         if not branch and ptv['git_branch']:
@@ -215,16 +217,18 @@ def getVersion(ptv):
                                         find_clean = i_clean.find(',')
                                         mrclean = i_clean[:find_clean].strip()
                                     else:
-                                        mrclean = re.sub('[\)\(\>]', '', i_clean).strip()
+                                        mrclean = re.sub(r'[\)\(\>]', '', i_clean).strip()
                                     branch = mrclean
                                     logger.info('[LAST_RELEASE] Branch: %s' % branch)
                                 if 'tag' in i:
                                     i_clean = i.find('tag')
-                                    mrclean = re.sub('tag: ', '', re.sub('[\(\)]', '', i[i_clean:])).strip()
+                                    mrclean = re.sub('tag: ', '', re.sub(r'[\(\)]', '', i[i_clean:])).strip()
                                     current_version_name = mrclean
                                     logger.info('[LAST_RELEASE] Version: %s' % current_version_name)
                                 elif i[1] == '(':
-                                    branch = re.sub('[\(\)]', '', i).strip()
+                                    branch = re.sub(r'[\(\)]', '', i).strip()
+                                    # Strip out github created refs
+                                    branch = ', '.join([br for br in branch.split(', ') if not br.startswith(r'refs/')])
                                     logger.info('[LAST_RELEASE] Branch: %s' % branch)
                             elif cnt == 1:
                                 current_version = i.strip()
@@ -461,6 +465,8 @@ def versionload(cli_values=None, carepackage_call=False):
         vers = 'M'
     elif mylar.CONFIG.GIT_BRANCH == 'python3-dev':
         vers = 'D'
+    elif mylar.CONFIG.GIT_BRANCH == '1000papercuts':
+        vers = 'E'
     else:
         vers = 'NONE'
 
